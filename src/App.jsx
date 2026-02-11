@@ -1,1577 +1,1665 @@
-import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { LogIn, User, Building, PlusCircle, Edit, Bell, Download, Lock, Paperclip, Send, XCircle, UploadCloud, ChevronsLeft, ChevronsRight, UserPlus, DownloadCloud, TrendingUp, KeyRound, AlertTriangle, ShieldCheck, FileText, FileImage, Home, CheckCircle, Trash2, Printer } from 'lucide-react';
-import { supabase } from './supabaseClient.js';
+import React, { useState, useEffect, useMemo } from 'react';
+import logo from '../LOGO CAALERA.png';
+import { 
+  Package, 
+  Truck, 
+  ClipboardList, 
+  History, 
+  Settings, 
+  Plus, 
+  Search, 
+  ArrowRightLeft, 
+  LogOut,
+  Save,
+  Trash2,
+  Box,
+  ChevronDown,
+  User,
+  Factory,
+  MapPin,
+  ChevronRight,
+  AlertTriangle,
+  FileText,
+  Edit2,
+  Database,
+  Check
+} from 'lucide-react';
+import { supabase } from './supabaseClient';
 
-// --- DATOS INICIALES (EN CEROS) ---
+// --- CONFIGURACIÓN INICIAL ---
+const BODEGAS = [
+  { id: 1, nombre: 'Terrapuerto', principal: true },
+  { id: 2, nombre: 'Bogota Plaza', principal: false },
+  { id: 3, nombre: 'Medellin', principal: false },
+  { id: 4, nombre: 'Barranquilla', principal: false }
+];
 
+const DEFAULT_CATEGORIES = [
+  { id: '0001', nombre: 'BANDEJAS' },
+  { id: '0002', nombre: 'BOLSAS' },
+  { id: '0003', nombre: 'CAJAS' },
+  { id: '0004', nombre: 'CINTA' },
+  { id: '0005', nombre: 'ESTUCHES' },
+  { id: '0006', nombre: 'ETIQUETAS' },
+  { id: '0007', nombre: 'MALLA ESPAÑOLA' },
+  { id: '0008', nombre: 'VINIPEL' },
+  { id: '0009', nombre: 'KIT EMPAQUE' }
+];
 
-const initialCuentasContables = [];
-const initialTiposGasto = [];
-const initialTerceros = [];
-const initialMovimientos = [];
-const initialIngresos = [];
-const initialSolicitudes = [];
+const App = () => {
+  // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
+  const [selectedBodega, setSelectedBodega] = useState(null);
+  const [activeTab, setActiveTab] = useState('insumos');
 
-const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+  // --- ESTADOS PRINCIPALES ---
+  const [insumos, setInsumos] = useState([]);
+  const [categorias, setCategorias] = useState([]);
+  const [clientes, setClientes] = useState([]);
+  const [proveedores, setProveedores] = useState([]);
+  const [transacciones, setTransacciones] = useState([]);
+  const [stockPorBodega, setStockPorBodega] = useState({}); // { sku: { bodegaId: cantidad } }
 
-// --- Componentes ---
-const AlertModal = ({isOpen, onClose, title, message, type = 'warning'}) => { if(!isOpen) return null; const colors = { warning: { border: 'border-yellow-400', icon: <AlertTriangle className="text-yellow-400 mb-4" size={48}/>, button: 'bg-yellow-500 hover:bg-yellow-600' }, success: { border: 'border-green-400', icon: <CheckCircle className="text-green-400 mb-4" size={48}/>, button: 'bg-green-500 hover:bg-green-600' }, error: { border: 'border-red-400', icon: <XCircle className="text-red-400 mb-4" size={48}/>, button: 'bg-red-500 hover:bg-red-600' }, }; const selectedColor = colors[type] || colors.warning;
-    return ( <div className="fixed inset-0 bg-black bg-opacity-60 z-[100] flex justify-center items-center p-4"> <div className={`bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border-t-4 ${selectedColor.border}`}> <div className="flex flex-col items-center text-center"> {selectedColor.icon} <h2 className="text-2xl font-bold text-white mb-2">{title}</h2> <p className="text-gray-300 mb-6 whitespace-pre-wrap">{message}</p> <button onClick={onClose} className={`${selectedColor.button} text-white font-bold py-2 px-8 rounded-lg transition-colors`}>Entendido</button> </div> </div> </div> ); 
-};
-const ConfirmationModal = ({ isOpen, onClose, onConfirm, title, message }) => {
-  if (!isOpen) return null;
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 z-[101] flex justify-center items-center p-4">
-      <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-sm border-t-4 border-yellow-500">
-        <div className="flex flex-col items-center text-center">
-          <AlertTriangle className="text-yellow-400 mb-4" size={48} />
-          <h2 className="text-2xl font-bold text-white mb-2">{title}</h2>
-          <p className="text-gray-300 mb-6">{message}</p>
-          <div className="flex justify-center space-x-4 w-full">
-            <button onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-8 rounded-lg transition-colors w-1/2">
-              Cancelar
-            </button>
-            <button onClick={onConfirm} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-8 rounded-lg transition-colors w-1/2">
-              Confirmar
-            </button>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-};
-const Header = ({ currentUser, onLogout }) => ( <header className="bg-sky-950 p-4 text-white flex justify-between items-center shadow-lg sticky top-0 z-40"> <div className="flex items-center space-x-3"><Building className="text-teal-400" /><h1 className="text-xl font-bold">La Calera Colombia SA - Gastos de Caja</h1></div> <div className="flex items-center space-x-4"> <span className="text-sm">Usuario: <span className="font-semibold">{currentUser.id_usuario}</span></span> <button onClick={onLogout} className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg flex items-center space-x-2 transition-colors"><LogIn className="transform rotate-180" size={18} /><span>Salir</span></button> </div> </header> );
+  // --- ESTADO PARA KARDEX ---
+  const [kardexSku, setKardexSku] = useState('');
+  const [showGeneralKardex, setShowGeneralKardex] = useState(false);
 
-const GastoModal = ({ isOpen, onClose, sedeId, terceros, handleAnadirMovimiento, tiposGasto, cuentasContables }) => {
-  if (!isOpen) return null;
-  const [loading, setLoading] = useState(true);
-  const [tipoGasto, setTipoGasto] = useState('');
-  const [cuentaContable, setCuentaContable] = useState('');
-  const [tercero, setTercero] = useState('');
-  const [detalle, setDetalle] = useState('');
-  const [valor, setValor] = useState('');
-  const [observaciones, setObservaciones] = useState('');
-  const [fechaGasto, setFechaGasto] = useState(new Date().toISOString().split('T')[0]);
-  const [alertInfo, setAlertInfo] = useState({isOpen: false, message:''});
+  // --- MODALES Y FORMULARIOS ---
+  const [showModal, setShowModal] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [currentInsumo, setCurrentInsumo] = useState({
+    proveedorId: '001', 
+    categoriaId: '0001',
+    insumoId: '', 
+    nombre: '',
+    referencia: '',
+    unidadPrincipal: '',
+    cantidadPrincipal: 1,
+    unidadSecundaria: '',
+    factorConversion: 1,
+    stockInicial: 0,
+    stockCantidad: 0,
+    stockUnidad: '',
+    stockMinimo: 0,
+    bodegaInicial: 1,
+    fecha: new Date().toISOString().slice(0,10)
+  });
 
-  const handleTipoGastoChange = (e) => {
-    const selectedTipoId = e.target.value;
-    setTipoGasto(selectedTipoId);
-    const tipo = tiposGasto.find(t => t.id === parseInt(selectedTipoId));
-    if (tipo) {
-      const cuenta = cuentasContables.find(c => c.id === tipo.id_cuenta);
-      setCuentaContable(cuenta ? cuenta.numero : '');
-    } else { setCuentaContable(''); }
-  };
+  // Autocompleta datos si el SKU ya existe (local o remoto)
+  const handleInsumoIdChange = async (nuevoInsumoId) => {
+    const cleaned = nuevoInsumoId;
+    // Construir SKU usando el proveedor y categoría actuales
+    const prov = currentInsumo.proveedorId || '001';
+    const cat = currentInsumo.categoriaId || '0001';
+    const sku = generarSKU(prov, cat, cleaned);
 
-  const handleSubmit = (e) => {
-      e.preventDefault();
-      let missingField = '';
-      if (!fechaGasto) missingField = 'Fecha del Gasto';
-      else if (!tipoGasto) missingField = 'Tipo de Gasto';
-      else if (!tercero) missingField = 'Tercero';
-      else if (!detalle) missingField = 'Detalle';
-      else if (!valor) missingField = 'Valor';
-      if (missingField) {
-          setAlertInfo({isOpen: true, message: `El campo "${missingField}" es obligatorio.`});
-          return;
-      }
-      const nuevoMovimiento = {
-          id_sede: sedeId,
-          id_tipo_gasto: parseInt(tipoGasto),
-          id_tercero: parseInt(tercero),
-          detalle: detalle,
-          valor: parseFloat(valor),
-          observaciones: observaciones,
-          fecha_gasto: fechaGasto,
-      };
-      handleAnadirMovimiento(nuevoMovimiento);
-      onClose();
-  }
-
-  const sedeTerceros = terceros.filter(t => t.id_sede_creacion === sedeId);
-  const sedeTiposGasto = tiposGasto.filter(t => t.id_sede === sedeId);
-
-  return (
-    <>
-      <AlertModal isOpen={alertInfo.isOpen} onClose={() => setAlertInfo({isOpen: false, message: ''})} title="Campo Requerido" message={alertInfo.message} />
-      <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-        <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border-t-4 border-red-500">
-          <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white">Registrar Nuevo Gasto</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div>
-          <form onSubmit={handleSubmit} className="space-y-4">
-             <div><label className="block text-red-300 text-sm font-bold mb-2">Fecha del Gasto</label><input type="date" value={fechaGasto} onChange={e => setFechaGasto(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500" /></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div><label className="block text-red-300 text-sm font-bold mb-2">Tipo de Gasto</label><select onChange={handleTipoGastoChange} value={tipoGasto} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500"><option value="">Seleccione...</option>{sedeTiposGasto.map(tg => <option key={tg.id} value={tg.id}>{tg.nombre}</option>)}</select></div>
-              <div><label className="block text-red-300 text-sm font-bold mb-2">Cuenta Contable</label><input type="text" readOnly value={cuentaContable} className="w-full bg-gray-900 text-gray-400 p-3 rounded-lg border border-gray-600" placeholder="Se autocompleta..."/></div>
-            </div>
-            <div><label className="block text-red-300 text-sm font-bold mb-2">Tercero (NIT o CC)</label><select value={tercero} onChange={e => setTercero(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500"><option value="">Seleccione...</option>{sedeTerceros.map(t => <option key={t.id} value={t.id}>{t.nombre} - {t.nit_cc}</option>)}</select></div>
-            <div><label className="block text-red-300 text-sm font-bold mb-2">Detalle del Gasto</label><input type="text" value={detalle} onChange={e => setDetalle(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500" /></div>
-            <div><label className="block text-red-300 text-sm font-bold mb-2">Valor</label><input type="number" value={valor} onChange={e => setValor(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500" /></div>
-            <div><label className="block text-red-300 text-sm font-bold mb-2">Observaciones</label><textarea rows="2" value={observaciones} onChange={e => setObservaciones(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-red-500"></textarea></div>
-            <div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-colors">Cancelar</button><button type="submit" className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">Guardar Gasto</button></div>
-          </form>
-        </div>
-      </div>
-    </>
-  );
-};
-const IngresoModal = ({ isOpen, onClose, sedeId, handleAnadirIngreso }) => { if(!isOpen) return null; const [concepto, setConcepto] = useState(''); const [valor, setValor] = useState(''); const [observaciones, setObservaciones] = useState(''); const [fechaIngreso, setFechaIngreso] = useState(new Date().toISOString().split('T')[0]); const [alertInfo, setAlertInfo] = useState({isOpen: false, message:''}); const handleSubmit = (e) => { e.preventDefault(); if(!fechaIngreso) {setAlertInfo({isOpen: true, message: "El campo 'Fecha de Ingreso' es obligatorio."}); return;} if(!concepto) {setAlertInfo({isOpen: true, message: "El campo 'Concepto' es obligatorio."}); return;} if(!valor) {setAlertInfo({isOpen: true, message: "El campo 'Valor' es obligatorio."}); return;} const nuevoIngreso = { id_sede: sedeId, concepto, valor: parseFloat(valor), observaciones, fecha_ingreso: fechaIngreso, }; handleAnadirIngreso(nuevoIngreso); onClose(); }
-  return ( <> <AlertModal isOpen={alertInfo.isOpen} onClose={() => setAlertInfo({isOpen: false, message: ''})} title="Campo Requerido" message={alertInfo.message} /> <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4"> <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-green-500"> <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white">Registrar Ingreso / Reintegro</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div> <form onSubmit={handleSubmit} className="space-y-4"> <div><label className="block text-green-300 text-sm font-bold mb-2">Fecha del Ingreso</label><input type="date" value={fechaIngreso} onChange={e => setFechaIngreso(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" /></div> <div><label className="block text-green-300 text-sm font-bold mb-2">Concepto</label><input type="text" value={concepto} onChange={e => setConcepto(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" /></div> <div><label className="block text-green-300 text-sm font-bold mb-2">Valor</label><input type="number" value={valor} onChange={e => setValor(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500" /></div> <div><label className="block text-green-300 text-sm font-bold mb-2">Observaciones</label><textarea rows="3" value={observaciones} onChange={e => setObservaciones(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-green-500"></textarea></div> <div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-colors">Cancelar</button><button type="submit" className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">Guardar Ingreso</button></div> </form> </div> </div> </> ); };
-
-const EditGastoModal = ({ isOpen, onClose, movimiento, handleEditarMovimiento, terceros, tiposGasto, cuentasContables }) => {
-  if (!isOpen || !movimiento) return null;
-  const [tipoGasto, setTipoGasto] = useState('');
-  const [cuentaContable, setCuentaContable] = useState('');
-  const [tercero, setTercero] = useState('');
-  const [detalle, setDetalle] = useState('');
-  const [valor, setValor] = useState('');
-  const [observaciones, setObservaciones] = useState('');
-  const [fechaGasto, setFechaGasto] = useState('');
-
-  useEffect(() => {
-    if (movimiento) {
-        setTipoGasto(movimiento.id_tipo_gasto);
-        setTercero(movimiento.id_tercero);
-        setDetalle(movimiento.detalle);
-        setValor(movimiento.valor);
-        setObservaciones(movimiento.observaciones);
-        setFechaGasto(movimiento.fecha_gasto);
-        const tipo = tiposGasto.find(t => t.id === movimiento.id_tipo_gasto);
-        if (tipo) {
-            const cuenta = cuentasContables.find(c => c.id === tipo.id_cuenta);
-            setCuentaContable(cuenta ? cuenta.numero : '');
-        }
-    }
-  }, [movimiento, tiposGasto, cuentasContables]);
-
-  const handleTipoGastoChange = (e) => {
-    const selectedTipoId = parseInt(e.target.value);
-    setTipoGasto(selectedTipoId);
-    const tipo = tiposGasto.find(t => t.id === selectedTipoId);
-    if (tipo) {
-      const cuenta = cuentasContables.find(c => c.id === tipo.id_cuenta);
-      setCuentaContable(cuenta ? cuenta.numero : '');
-    } else { setCuentaContable(''); }
-  };
-
-  const handleSubmit = (e) => {
-      e.preventDefault();
-      const movimientoActualizado = { ...movimiento, id_tipo_gasto: tipoGasto, id_tercero: tercero, detalle, valor: parseFloat(valor), observaciones, fecha_gasto: fechaGasto };
-      handleEditarMovimiento(movimientoActualizado);
-      onClose();
-  }
-
-  const sedeTerceros = terceros.filter(t => t.id_sede_creacion === movimiento.id_sede);
-  const sedeTiposGasto = tiposGasto.filter(t => t.id_sede === movimiento.id_sede);
-
-  return (
-      <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-        <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-2xl border-t-4 border-orange-500">
-          <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white">Editar Gasto</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div>
-          <form onSubmit={handleSubmit} className="space-y-4">
-             <div><label className="block text-orange-300 text-sm font-bold mb-2">Fecha del Gasto</label><input type="date" value={fechaGasto} onChange={e => setFechaGasto(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div><label className="block text-orange-300 text-sm font-bold mb-2">Tipo de Gasto</label><select onChange={handleTipoGastoChange} value={tipoGasto} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500"><option value="">Seleccione...</option>{sedeTiposGasto.map(tg => <option key={tg.id} value={tg.id}>{tg.nombre}</option>)}</select></div>
-              <div><label className="block text-orange-300 text-sm font-bold mb-2">Cuenta Contable</label><input type="text" readOnly value={cuentaContable} className="w-full bg-gray-900 text-gray-400 p-3 rounded-lg border border-gray-600" placeholder="Se autocompleta..."/></div>
-            </div>
-            <div><label className="block text-orange-300 text-sm font-bold mb-2">Tercero (NIT o CC)</label><select value={tercero} onChange={e => setTercero(parseInt(e.target.value))} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500"><option value="">Seleccione...</option>{sedeTerceros.map(t => <option key={t.id} value={t.id}>{t.nombre} - {t.nit_cc}</option>)}</select></div>
-            <div><label className="block text-orange-300 text-sm font-bold mb-2">Detalle del Gasto</label><input type="text" value={detalle} onChange={e => setDetalle(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-            <div><label className="block text-orange-300 text-sm font-bold mb-2">Valor</label><input type="number" value={valor} onChange={e => setValor(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-            <div><label className="block text-orange-300 text-sm font-bold mb-2">Observaciones</label><textarea rows="2" value={observaciones} onChange={e => setObservaciones(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500"></textarea></div>
-            <div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-colors">Cancelar</button><button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">Guardar Cambios</button></div>
-          </form>
-        </div>
-      </div>
-  );
-};
-
-const EditIngresoModal = ({ isOpen, onClose, ingreso, handleEditarIngreso }) => {
-  if (!isOpen || !ingreso) return null;
-  const [concepto, setConcepto] = useState('');
-  const [valor, setValor] = useState('');
-  const [observaciones, setObservaciones] = useState('');
-  const [fechaIngreso, setFechaIngreso] = useState('');
-
-  useEffect(() => {
-    if (ingreso) {
-        setConcepto(ingreso.concepto);
-        setValor(ingreso.valor);
-        setObservaciones(ingreso.observaciones);
-        setFechaIngreso(ingreso.fecha_ingreso);
-    }
-  }, [ingreso]);
-
-  const handleSubmit = (e) => {
-      e.preventDefault();
-      const ingresoActualizado = { ...ingreso, concepto, valor: parseFloat(valor), observaciones, fecha_ingreso: fechaIngreso };
-      handleEditarIngreso(ingresoActualizado);
-      onClose();
-  }
-
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-      <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-orange-500">
-        <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white">Editar Ingreso / Reintegro</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div><label className="block text-orange-300 text-sm font-bold mb-2">Fecha del Ingreso</label><input type="date" value={fechaIngreso} onChange={e => setFechaIngreso(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-          <div><label className="block text-orange-300 text-sm font-bold mb-2">Concepto</label><input type="text" value={concepto} onChange={e => setConcepto(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-          <div><label className="block text-orange-300 text-sm font-bold mb-2">Valor</label><input type="number" value={valor} onChange={e => setValor(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500" /></div>
-          <div><label className="block text-orange-300 text-sm font-bold mb-2">Observaciones</label><textarea rows="3" value={observaciones} onChange={e => setObservaciones(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-orange-500"></textarea></div>
-          <div className="flex justify-end space-x-4 pt-4"><button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg transition-colors">Cancelar</button><button type="submit" className="bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-6 rounded-lg transition-colors">Guardar Cambios</button></div>
-        </form>
-      </div>
-    </div>
-  );
-};
-
-const SolicitudesModal = ({ isOpen, onClose, sedeId, movimientos, handleEnviarSoporte, terceros }) => {
-    if (!isOpen) return null;
-    const [selectedFiles, setSelectedFiles] = useState({});
-    const handleFileSelect = (movId, file) => {
-        setSelectedFiles(prev => ({...prev, [movId]: file }));
-    };
-    const misSolicitudes = movimientos.filter(m => m.id_sede === sedeId && m.soporteRequerido && !m.soporteEnviado);
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-3xl border-t-4 border-orange-500">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-white flex items-center"><Bell className="mr-3 text-orange-400"/>Solicitudes de Soporte</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button>
-                </div>
-                <div className="space-y-4 max-h-96 overflow-y-auto pr-2">
-                    {misSolicitudes.length > 0 ? misSolicitudes.map(mov => {
-                        const tercero = terceros.find(t => t.id === mov.id_tercero);
-                        return (
-                        <div key={mov.id} className="bg-gray-700 p-4 rounded-lg">
-                            <div className="grid grid-cols-3 gap-4 text-sm">
-                                <p className="text-white col-span-3"><span className="font-bold text-teal-300">Item {String(mov.item_sede).padStart(4, '0')}:</span> {mov.detalle}</p>
-                                <p className="text-gray-300"><span className="font-semibold">Fecha Gasto:</span> {mov.fecha_gasto}</p>
-                                <p className="text-gray-300"><span className="font-semibold">Tercero:</span> {tercero?.nombre || 'N/A'}</p>
-                                <p className="text-gray-300"><span className="font-semibold">Valor:</span> ${new Intl.NumberFormat('es-CO').format(mov.valor)}</p>
-                            </div>
-                            <div className="mt-3 flex items-center space-x-3">
-                                <input type="file" accept="image/png, image/jpeg, .pdf, .doc, .docx" onChange={(e) => handleFileSelect(mov.id, e.target.files[0])} className="text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100"/>
-                                <button onClick={() => handleEnviarSoporte(mov.id, selectedFiles[mov.id])} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center space-x-2"><Send size={16}/><span>Enviar</span></button>
-                            </div>
-                        </div>
-                    )}) : <p className="text-gray-400 text-center py-8">No hay solicitudes pendientes.</p>}
-                </div>
-            </div>
-        </div>
-    );
-};
-const VerSoporteModal = ({ isOpen, onClose, solicitud }) => { if (!isOpen || !solicitud || !solicitud.url_foto) return null; const fileName = solicitud.fileName || `soporte_movimiento_${solicitud.id_movimiento}.png`; const isImage = solicitud.fileType && solicitud.fileType.startsWith('image/'); const isPdf = solicitud.fileType === 'application/pdf';
-return ( <div className="fixed inset-0 bg-black bg-opacity-75 z-[101] flex justify-center items-center p-4" onClick={onClose}> <div className="bg-gray-800 p-4 rounded-xl shadow-2xl relative max-w-4xl w-full" onClick={(e) => e.stopPropagation()}> <div className="flex justify-between items-center mb-4"> <h3 className="text-lg font-bold text-white">Visor de Soporte</h3> <div className="flex items-center space-x-4"> <a href={solicitud.url_foto} download={fileName} className="bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg flex items-center space-x-2"> <DownloadCloud size={20}/> <span>Descargar</span> </a> <button onClick={onClose} className="bg-red-600 text-white rounded-full p-1 hover:bg-red-500 transition-colors"><XCircle size={28}/></button> </div> </div> <div className="bg-black rounded-lg overflow-hidden flex justify-center items-center h-[75vh]"> {isImage ? <img src={solicitud.url_foto} alt="Soporte de gasto" className="max-w-full max-h-full object-contain" /> : isPdf ? <embed src={solicitud.url_foto} type="application/pdf" width="100%" height="100%" /> : <div className="text-center text-white p-10"><FileText size={80} className="mx-auto text-gray-400 mb-4"/><p className="text-xl">No se puede previsualizar este archivo.</p><p className="text-gray-400">{fileName}</p></div>} </div> </div> </div> ); };
-const GestionarTercerosModal = ({isOpen, onClose, sedeId, terceros, handleAnadirTercero, handleEditarTercero}) => { 
-    if(!isOpen) return null; 
-    const [addNit, setAddNit] = useState(''); 
-    const [addNombre, setAddNombre] = useState(''); 
-    const [addDireccion, setAddDireccion] = useState(''); 
-    const [addTelefono, setAddTelefono] = useState(''); 
-    const [addCorreo, setAddCorreo] = useState(''); 
-    const [editingTercero, setEditingTercero] = useState(null); 
-    const [localAlert, setLocalAlert] = useState({ isOpen: false, message: '' });
-
-    const sedeTerceros = terceros.filter(t => t.id_sede_creacion === sedeId); 
-    const handleSelectToEdit = (tercero) => { setEditingTercero(JSON.parse(JSON.stringify(tercero))); }; 
-    const handleCancelEdit = () => { setEditingTercero(null); }; 
-    
-    const handleAddSubmit = (e) => { 
-        e.preventDefault(); 
-        if(!addNit || !addNombre || !addDireccion || !addTelefono) {
-            setLocalAlert({ isOpen: true, message: "Debe digitar todos los campos obligatorios." });
-            return; 
-        } 
-        const nuevoTercero = { id: Date.now(), nit_cc: addNit, nombre: addNombre, direccion: addDireccion, telefono: addTelefono, correo: addCorreo, id_sede_creacion: sedeId }; 
-        handleAnadirTercero(nuevoTercero); 
-        setAddNit(''); setAddNombre(''); setAddDireccion(''); setAddTelefono(''); setAddCorreo(''); 
-    }; 
-    
-    const handleEditSubmit = (e) => { 
-        e.preventDefault(); 
-        if (!editingTercero.nit_cc || !editingTercero.nombre || !editingTercero.direccion || !editingTercero.telefono) {
-             setLocalAlert({ isOpen: true, message: "Debe digitar todos los campos obligatorios." });
-            return;
-        }
-        handleEditarTercero(editingTercero); 
-        setEditingTercero(null); 
-    }
-
-    return(
-    <>
-        <AlertModal isOpen={localAlert.isOpen} onClose={() => setLocalAlert({isOpen: false, message: ''})} title="Campos Obligatorios" message={localAlert.message} type="error" />
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-4xl border-t-4 border-sky-500">
-                <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white">Gestionar Terceros</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div> 
-                        {editingTercero ? ( <><h3 className="text-xl text-orange-400 font-semibold mb-4">Editando a {editingTercero.nombre}</h3><form onSubmit={handleEditSubmit} className="space-y-3"> <div><label className="text-sm text-gray-300">NIT o CC</label><input type="text" value={editingTercero.nit_cc} onChange={e => setEditingTercero({...editingTercero, nit_cc: e.target.value})} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Nombre Completo</label><input type="text" value={editingTercero.nombre} onChange={e => setEditingTercero({...editingTercero, nombre: e.target.value})} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Dirección</label><input type="text" value={editingTercero.direccion} onChange={e => setEditingTercero({...editingTercero, direccion: e.target.value})} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Teléfono</label><input type="text" value={editingTercero.telefono} onChange={e => setEditingTercero({...editingTercero, telefono: e.target.value})} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Correo (Opcional)</label><input type="email" value={editingTercero.correo} onChange={e => setEditingTercero({...editingTercero, correo: e.target.value})} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div className="flex space-x-4 mt-4"><button type="button" onClick={handleCancelEdit} className="w-full bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-4 rounded-lg">Cancelar</button><button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 text-white font-bold py-2 px-4 rounded-lg">Guardar</button></div> </form></> ) 
-                        : ( <><h3 className="text-xl text-sky-300 font-semibold mb-4">Añadir Nuevo Tercero</h3><form onSubmit={handleAddSubmit} className="space-y-3"> <div><label className="text-sm text-gray-300">NIT o CC</label><input type="text" value={addNit} onChange={e => setAddNit(e.target.value)} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Nombre Completo</label><input type="text" value={addNombre} onChange={e => setAddNombre(e.target.value)} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Dirección</label><input type="text" value={addDireccion} onChange={e => setAddDireccion(e.target.value)} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Teléfono</label><input type="text" value={addTelefono} onChange={e => setAddTelefono(e.target.value)} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <div><label className="text-sm text-gray-300">Correo (Opcional)</label><input type="email" value={addCorreo} onChange={e => setAddCorreo(e.target.value)} className="w-full bg-gray-700 text-white p-2 mt-1 rounded-md border border-gray-600" /></div> <button type="submit" className="w-full bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg mt-4 flex items-center justify-center space-x-2"><UserPlus size={18}/><span>Añadir Tercero</span></button> </form></> )} 
-                    </div> 
-                    <div>
-                        <h3 className="text-xl text-sky-300 font-semibold mb-4">Terceros Existentes</h3>
-                        <div className="max-h-80 overflow-y-auto space-y-2 pr-2"> 
-                            {sedeTerceros.map(t => ( 
-                                <div key={t.id} className="bg-gray-700 p-3 rounded-md flex justify-between items-center">
-                                    <div><p className="font-semibold text-white">{t.nombre}</p><p className="text-sm text-gray-400">{t.nit_cc}</p></div>
-                                    <div className="flex items-center space-x-2">
-                                        <button onClick={() => handleSelectToEdit(t)} className="text-sky-400 hover:text-sky-300 p-2 rounded-full hover:bg-sky-800"><Edit size={18}/></button>
-                                    </div>
-                                </div> 
-                            ))} 
-                        </div>
-                    </div> 
-                </div>
-            </div>
-        </div>
-    </>
-    ); 
-};
-const CargaMasivaModal = ({isOpen, onClose, handleCargaMasivaCuentas, handleCargaMasivaTerceros, sedes, setAlertInfo}) => {
-    if(!isOpen) return null;
-    const [cuentasFile, setCuentasFile] = useState(null);
-    const [tercerosFile, setTercerosFile] = useState(null);
-
-    const processFile = async (file, handler, requiredColumns) => {
-  if (typeof window.XLSX === 'undefined') {
-    setAlertInfo({isOpen: true, title: "Librería no cargada", message: "La funcionalidad para leer archivos Excel aún no está lista. Por favor, espere un momento e intente de nuevo.", type: 'error'});
-    return;
-  }
-  if (!file) {
-    setAlertInfo({isOpen: true, title: "Archivo no seleccionado", message: "Por favor, seleccione un archivo para procesar.", type: 'error'});
-    return;
-  }
-
-  try {
-    const json = await new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        try {
-          const data = e.target.result;
-          const workbook = window.XLSX.read(data, { type: 'binary' });
-          const sheetName = workbook.SheetNames[0];
-          const worksheet = workbook.Sheets[sheetName];
-          const jsonData = window.XLSX.utils.sheet_to_json(worksheet);
-
-          if (jsonData.length === 0) {
-            return reject(new Error("El archivo seleccionado no contiene datos."));
-          }
-          
-          const firstRow = jsonData[0];
-          for (const col of requiredColumns) {
-            if (!firstRow.hasOwnProperty(col)) {
-              return reject(new Error(`El archivo no tiene la columna requerida: "${col}".`));
-            }
-          }
-          resolve(jsonData);
-        } catch (err) {
-          reject(err);
-        }
-      };
-      reader.onerror = (err) => reject(err);
-      reader.readAsBinaryString(file);
-    });
-    
-    // --- AQUÍ ESTABA EL ERROR ---
-    if (json) { // CORREGIDO: antes decía "data"
-      try {
-        await handler(json); // CORREGIDO: antes decía "data"
-        onClose(); 
-      } catch (err) {
-        setAlertInfo({ isOpen: true, title: "Error en la Carga", message: `Hubo un problema al subir los datos: ${err.message}`, type: 'error' });
-      }
-    }
-  } catch (error) {
-    console.error("Error al procesar el archivo:", error);
-    setAlertInfo({ isOpen: true, title: "Error de Procesamiento", message: error.message, type: 'error' });
-  }
-};
-
-    return( <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4"> <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-teal-500"> <div className="flex justify-between items-center mb-6"><h2 className="text-2xl font-bold text-white flex items-center"><UploadCloud className="mr-3 text-teal-300"/>Cargas Masivas</h2><button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button></div> <div className="space-y-6"> <div><h3 className="text-lg font-semibold text-teal-300 mb-2">Cargar Cuentas Contables</h3><p className="text-sm text-gray-400 mb-3">Columnas requeridas: `Numero_Cuenta`, `Nombre_Cuenta`.</p><input type="file" onChange={(e) => setCuentasFile(e.target.files[0])} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" className="text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100"/><button onClick={() => processFile(cuentasFile, handleCargaMasivaCuentas, ['Numero_Cuenta', 'Nombre_Cuenta'])} className="mt-2 w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg">Procesar Cuentas</button></div> <div className="border-t border-gray-700 pt-6"><h3 className="text-lg font-semibold text-teal-300 mb-2">Cargar Terceros</h3><p className="text-sm text-gray-400 mb-3">Columnas: `ID_Sede`, `NIT_CC`, `Nombre`, `Direccion`, `Telefono`, `Correo`.</p><p className="text-xs text-gray-500">IDs de Sede válidos: {sedes.map(s => `${s.id} (${s.nombre})`).join(', ')}</p><input type="file" onChange={(e) => setTercerosFile(e.target.files[0])} accept=".csv, application/vnd.openxmlformats-officedocument.spreadsheetml.sheet, application/vnd.ms-excel" className="text-sm text-gray-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-teal-50 file:text-teal-700 hover:file:bg-teal-100"/><button onClick={() => processFile(tercerosFile, handleCargaMasivaTerceros, ['ID_Sede', 'NIT_CC', 'Nombre'])} className="mt-2 w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg">Procesar Terceros</button></div> </div> <div className="flex justify-end pt-8 space-x-4"><button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg">Cerrar</button></div> </div> </div> ) };
-const GestionarTiposCuentasModal = ({isOpen, onClose, sedes, tiposGasto, cuentasContables, handleAnadirTipoGasto, handleAnadirCuentaContable, handleEditarTipoGasto, handleEditarCuentaContable}) => {
-    if(!isOpen) return null;
-    const [selectedSedeId, setSelectedSedeId] = useState(sedes[0]?.id || '');
-    const [nombreGasto, setNombreGasto] = useState('');
-    const [cuentaAsociadaId, setCuentaAsociadaId] = useState('');
-    const [numeroCuenta, setNumeroCuenta] = useState('');
-    const [nombreCuenta, setNombreCuenta] = useState('');
-    const [editingCuenta, setEditingCuenta] = useState(null);
-    const [editingTipoGasto, setEditingTipoGasto] = useState(null);
-
-    const tiposGastoFiltrados = useMemo(() => {
-        return tiposGasto.filter(tg => tg.id_sede === selectedSedeId);
-    }, [tiposGasto, selectedSedeId]);
-
-    const handleAddTipoGastoSubmit = (e) => {
-        e.preventDefault();
-        if(!nombreGasto || !cuentaAsociadaId || !selectedSedeId) {
-            alert("Todos los campos para añadir tipo de gasto son obligatorios.");
-            return;
-        }
-        const nuevoTipo = { nombre: nombreGasto, id_cuenta: parseInt(cuentaAsociadaId), id_sede: selectedSedeId };
-        handleAnadirTipoGasto(nuevoTipo);
-        setNombreGasto('');
-        setCuentaAsociadaId('');
-    };
-
-    const handleAddCuentaSubmit = (e) => {
-        e.preventDefault();
-        if(!numeroCuenta || !nombreCuenta) {
-            alert("Número y Nombre de cuenta son obligatorios.");
-            return;
-        }
-        handleAnadirCuentaContable({numero: numeroCuenta, nombre: nombreCuenta});
-        setNumeroCuenta('');
-        setNombreCuenta('');
-    };
-
-    const handleEditCuentaSubmit = (e) => {
-        e.preventDefault();
-        handleEditarCuentaContable(editingCuenta);
-        setEditingCuenta(null);
-    };
-
-    const handleEditTipoGastoSubmit = (e) => {
-        e.preventDefault();
-        handleEditarTipoGasto(editingTipoGasto);
-        setEditingTipoGasto(null);
-    };
-
-    return( 
-    <>
-        {editingCuenta && (
-            <div className="fixed inset-0 bg-black bg-opacity-70 z-[51] flex justify-center items-center p-4">
-                <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-orange-500">
-                    <h3 className="text-xl text-orange-400 font-semibold mb-4">Editar Cuenta Contable</h3>
-                    <form onSubmit={handleEditCuentaSubmit} className="space-y-3">
-                        <div><label className="text-sm text-gray-300">Número de Cuenta</label><input type="text" value={editingCuenta.numero} onChange={e => setEditingCuenta({...editingCuenta, numero: e.target.value})} className="w-full bg-gray-700 p-2 mt-1 rounded-md" /></div>
-                        <div><label className="text-sm text-gray-300">Nombre de la Cuenta</label><input type="text" value={editingCuenta.nombre} onChange={e => setEditingCuenta({...editingCuenta, nombre: e.target.value})} className="w-full bg-gray-700 p-2 mt-1 rounded-md" /></div>
-                        <div className="flex space-x-4 mt-4"><button type="button" onClick={() => setEditingCuenta(null)} className="w-full bg-gray-600 hover:bg-gray-500 py-2 rounded-md">Cancelar</button><button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 py-2 rounded-md">Guardar</button></div>
-                    </form>
-                </div>
-            </div>
-        )}
-         {editingTipoGasto && (
-            <div className="fixed inset-0 bg-black bg-opacity-70 z-[51] flex justify-center items-center p-4">
-                <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-orange-500">
-                    <h3 className="text-xl text-orange-400 font-semibold mb-4">Editar Tipo de Gasto</h3>
-                    <form onSubmit={handleEditTipoGastoSubmit} className="space-y-3">
-                        <div><label className="text-sm text-gray-300">Nombre del Tipo de Gasto</label><input type="text" value={editingTipoGasto.nombre} onChange={e => setEditingTipoGasto({...editingTipoGasto, nombre: e.target.value})} className="w-full bg-gray-700 p-2 mt-1 rounded-md" /></div>
-                        <div><label className="text-sm text-gray-300">Enlazar a Cuenta</label><select value={editingTipoGasto.id_cuenta} onChange={e => setEditingTipoGasto({...editingTipoGasto, id_cuenta: parseInt(e.target.value)})} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md"><option value="">Seleccione...</option>{cuentasContables.map(cc => <option key={cc.id} value={cc.id}>{cc.numero} - {cc.nombre}</option>)}</select></div>
-                        <div className="flex space-x-4 mt-4"><button type="button" onClick={() => setEditingTipoGasto(null)} className="w-full bg-gray-600 hover:bg-gray-500 py-2 rounded-md">Cancelar</button><button type="submit" className="w-full bg-orange-600 hover:bg-orange-700 py-2 rounded-md">Guardar</button></div>
-                    </form>
-                </div>
-            </div>
-        )}
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4"> 
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-6xl border-t-4 border-teal-500"> 
-                <div className="flex justify-between items-center mb-6"> <h2 className="text-2xl font-bold text-white">Gestionar Parámetros Contables</h2> <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button> </div> 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-8"> 
-                    <div className="md:col-span-1">
-                        <h3 className="text-xl text-teal-300 font-semibold mb-4">Cuentas Contables</h3>
-                        <div className="space-y-4 bg-gray-700 p-4 rounded-lg"> 
-                            <form onSubmit={handleAddCuentaSubmit} className="space-y-2"> <label className="text-sm text-gray-300">Añadir Nueva Cuenta</label> <input type="text" value={numeroCuenta} onChange={e=>setNumeroCuenta(e.target.value)} placeholder="Número de Cuenta (10 dígitos)" className="w-full bg-gray-600 p-2 rounded-md"/> <input type="text" value={nombreCuenta} onChange={e=>setNombreCuenta(e.target.value)} placeholder="Nombre de la Cuenta" className="w-full bg-gray-600 p-2 rounded-md"/> <button type="submit" className="w-full bg-teal-600 hover:bg-teal-700 py-2 rounded-md">Añadir Cuenta</button> </form> 
-                            <div className="border-t border-gray-600 my-4"></div> 
-                            <div className="max-h-64 overflow-y-auto space-y-2 pr-2"> {cuentasContables.map(cc => <div key={cc.id} className="bg-gray-900 p-2 rounded-md flex justify-between items-center"><div><p className="font-semibold text-sm">{cc.nombre}</p><p className="text-xs text-gray-400">{cc.numero}</p></div><button onClick={() => setEditingCuenta(cc)} className="text-orange-400 hover:text-orange-300 p-1"><Edit size={16}/></button></div>)} </div> 
-                        </div>
-                    </div>
-                    <div className="md:col-span-2">
-                        <h3 className="text-xl text-teal-300 font-semibold mb-4">Tipos de Gasto por Sede</h3>
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                            <div>
-                                <form onSubmit={handleAddTipoGastoSubmit} className="space-y-4 bg-gray-700 p-4 rounded-lg"> 
-                                    <div> <label className="text-sm text-gray-300">Sede</label> <select value={selectedSedeId} onChange={e => setSelectedSedeId(parseInt(e.target.value))} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500"> {sedes.map(sede => <option key={sede.id} value={sede.id}>{sede.nombre}</option>)} </select> </div> 
-                                    <div> <label className="text-sm text-gray-300">Nombre del Tipo de Gasto</label> <input type="text" value={nombreGasto} onChange={e => setNombreGasto(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" placeholder="Ej: Mantenimiento Vehículo"/> </div> 
-                                    <div> <label className="text-sm text-gray-300">Enlazar a Cuenta</label> <select value={cuentaAsociadaId} onChange={e => setCuentaAsociadaId(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500"> <option value="">Seleccione...</option> {cuentasContables.map(cc => <option key={cc.id} value={cc.id}>{cc.numero} - {cc.nombre}</option>)} </select> </div> 
-                                    <button type="submit" className="w-full bg-teal-600 hover:bg-teal-700 text-white font-bold py-2 px-4 rounded-lg mt-4">Añadir Tipo de Gasto</button> 
-                                </form>
-                            </div>
-                            <div>
-                                <div className="max-h-96 overflow-y-auto space-y-2 pr-2"> {tiposGastoFiltrados.length > 0 ? tiposGastoFiltrados.map(tg => { const cuenta = cuentasContables.find(c => c.id === tg.id_cuenta); return( <div key={tg.id} className="bg-gray-900 p-3 rounded-md flex justify-between items-center"><div> <p className="font-semibold text-white">{tg.nombre}</p> <p className="text-sm text-teal-400">Cuenta: {cuenta ? `${cuenta.numero}` : 'N/A'}</p> </div><button onClick={() => setEditingTipoGasto(tg)} className="text-orange-400 hover:text-orange-300 p-1"><Edit size={16}/></button></div> ) }) : <p className="text-gray-500 text-center">No hay tipos de gasto para esta sede.</p>} </div>
-                            </div>
-                        </div>
-                    </div> 
-                </div> 
-            </div> 
-        </div> 
-    </>
-    ); 
-};
-const SeguridadModal = ({isOpen, onClose, sedes, handleSeguridadSede, adminPassword, handleChangeAdminPassword}) => { if(!isOpen) return null; const [newAdminPass, setNewAdminPass] = useState(''); const [confirmAdminPass, setConfirmAdminPass] = useState(''); const [sedePasswords, setSedePasswords] = useState({}); const handleSedePassChange = (sedeId, pass) => { setSedePasswords(prev => ({ ...prev, [sedeId]: pass })); }; const handleSetSedePassword = (sedeId) => { if(sedePasswords[sedeId]){ handleSeguridadSede(sedeId, 'setPassword', sedePasswords[sedeId]); alert(`Contraseña establecida.`); } else { alert('Por favor ingrese una contraseña.'); } }; const handleRemoveSedePassword = (sedeId) => { handleSeguridadSede(sedeId, 'removePassword'); alert(`Contraseña eliminada.`); }; const handleToggleBlock = (sedeId) => { handleSeguridadSede(sedeId, 'toggleBlock'); }; const handleAdminPassSubmit = (e) => { e.preventDefault(); if(newAdminPass !== confirmAdminPass){ alert("Las contraseñas no coinciden."); return; } if(newAdminPass.length < 4){ alert("La contraseña debe tener al menos 4 caracteres."); return; } handleChangeAdminPassword(newAdminPass); alert("Contraseña de administrador cambiada."); setNewAdminPass(''); setConfirmAdminPass(''); };
-    return ( <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4"> <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-4xl border-t-4 border-yellow-500"> <div className="flex justify-between items-center mb-6"> <h2 className="text-2xl font-bold text-white flex items-center"><ShieldCheck className="mr-3 text-yellow-400"/>Gestionar Seguridad</h2> <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button> </div> <div className="grid grid-cols-1 md:grid-cols-2 gap-8"> <div> <h3 className="text-xl text-yellow-300 font-semibold mb-4">Seguridad de Sedes</h3> <div className="max-h-96 overflow-y-auto space-y-4 pr-2"> {sedes.map(sede => ( <div key={sede.id} className="bg-gray-700 p-4 rounded-lg"> <p className="font-bold text-white text-lg">{sede.nombre}</p> <div className="mt-2 space-y-3"> <div className="flex items-center space-x-2"> <input type="text" placeholder="Nueva contraseña..." onChange={(e) => handleSedePassChange(sede.id, e.target.value)} className="w-full bg-gray-600 text-white p-2 rounded-md border border-gray-500" /> <button onClick={() => handleSetSedePassword(sede.id)} className="bg-sky-600 hover:bg-sky-700 text-white px-3 py-2 rounded-md">Fijar</button> </div> <div className="flex items-center justify-between"> <p className="text-sm text-gray-400">Contraseña: {sede.password ? 'Establecida' : 'Ninguna'}</p> {sede.password && <button onClick={() => handleRemoveSedePassword(sede.id)} className="text-xs text-red-400 hover:text-red-300">Eliminar</button>} </div> <button onClick={() => handleToggleBlock(sede.id)} className={`w-full py-2 rounded-md font-semibold ${sede.blocked ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}>{sede.blocked ? 'Desbloquear' : 'Bloquear'} Sede</button> </div> </div> ))} </div> </div> <div> <h3 className="text-xl text-yellow-300 font-semibold mb-4">Contraseña de Administrador</h3> <form onSubmit={handleAdminPassSubmit} className="bg-gray-700 p-4 rounded-lg space-y-3"> <div><label className="text-sm text-gray-300">Nueva Contraseña</label><input type="password" value={newAdminPass} onChange={e => setNewAdminPass(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" /></div> <div><label className="text-sm text-gray-300">Confirmar Contraseña</label><input type="password" value={confirmAdminPass} onChange={e => setConfirmAdminPass(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" /></div> <button type="submit" className="w-full bg-yellow-600 hover:bg-yellow-700 text-white font-bold py-2 px-4 rounded-lg mt-4">Cambiar Contraseña</button> </form> </div> </div> </div> </div> ) };
-const GestionarSedesModal = ({isOpen, onClose, sedes, handleAnadirSede}) => {
-    if(!isOpen) return null;
-    const [nombre, setNombre] = useState('');
-    const [idUsuario, setIdUsuario] = useState('');
-    const [saldo_inicial, setsaldo_inicial] = useState('');
-    const handleSubmit = (e) => {
-        e.preventDefault();
-        if(!nombre || !idUsuario || !saldo_inicial) {
-            alert("Todos los campos son obligatorios.");
-            return;
-        }
-        const nuevaSede = {
-            nombre,
-            id_usuario: idUsuario.toUpperCase(),
-            saldo_inicial: parseFloat(saldo_inicial)
-        };
-        handleAnadirSede(nuevaSede);
-        setNombre('');
-        setIdUsuario('');
-        setsaldo_inicial('');
-    };
-    return(
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-4xl border-t-4 border-indigo-500">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-white flex items-center"><Home className="mr-3 text-indigo-400"/>Gestionar Sedes</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div>
-                        <h3 className="text-xl text-indigo-300 font-semibold mb-4">Añadir Nueva Sede</h3>
-                        <form onSubmit={handleSubmit} className="space-y-4 bg-gray-700 p-4 rounded-lg">
-                            <div>
-                                <label className="text-sm text-gray-300">Nombre de la Sede</label>
-                                <input type="text" value={nombre} onChange={e => setNombre(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" placeholder="Ej: Sede Eje Cafetero"/>
-                            </div>
-                             <div>
-                                <label className="text-sm text-gray-300">ID de Usuario (corto, mayúsculas)</label>
-                                <input type="text" value={idUsuario} onChange={e => setIdUsuario(e.target.value.toUpperCase())} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" placeholder="Ej: EJE"/>
-                            </div>
-                             <div>
-                                <label className="text-sm text-gray-300">Saldo Inicial</label>
-                                <input type="number" value={saldo_inicial} onChange={e => setsaldo_inicial(e.target.value)} className="w-full bg-gray-600 text-white p-2 mt-1 rounded-md border border-gray-500" placeholder="Ej: 2000000"/>
-                            </div>
-                            <button type="submit" className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2 px-4 rounded-lg mt-4">Añadir Sede</button>
-                        </form>
-                    </div>
-                    <div>
-                        <h3 className="text-xl text-indigo-300 font-semibold mb-4">Sedes Existentes</h3>
-                        <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
-                            {sedes.map(s => (
-                                <div key={s.id} className="bg-gray-700 p-3 rounded-md">
-                                    <p className="font-semibold text-white">{s.nombre}</p>
-                                    <p className="text-sm text-gray-400">ID: {s.id_usuario} | Saldo Inicial: ${new Intl.NumberFormat('es-CO').format(s.saldo_inicial)}</p>
-                                </div>
-                            ))}
-                        </div>
-                    </div>
-                </div>
-            </div>
-        </div>
-    );
-};
-const BloquearFechaModal = ({ isOpen, onClose, fechaBloqueoActual, handleSetFechaBloqueo }) => {
-    if (!isOpen) return null;
-    const [nuevaFecha, setNuevaFecha] = useState(fechaBloqueoActual || '');
-
-    const handleSubmit = () => {
-        handleSetFechaBloqueo(nuevaFecha);
-        onClose();
-    };
-
-    return (
-        <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-            <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-md border-t-4 border-purple-500">
-                <div className="flex justify-between items-center mb-6">
-                    <h2 className="text-2xl font-bold text-white flex items-center"><Lock className="mr-3 text-purple-400"/>Bloquear Movimientos por Fecha</h2>
-                    <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button>
-                </div>
-                <div className="space-y-4">
-                    <p className="text-gray-300">
-                        Seleccione una fecha. Todos los movimientos (gastos e ingresos) registrados en o antes de esta fecha 
-                        no podrán ser editados ni eliminados por los usuarios de las sedes.
-                    </p>
-                    <div>
-                        <label className="block text-purple-300 text-sm font-bold mb-2">Fecha de Bloqueo</label>
-                        <input 
-                            type="date" 
-                            value={nuevaFecha} 
-                            onChange={e => setNuevaFecha(e.target.value)} 
-                            className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-purple-500" 
-                        />
-                    </div>
-                     {fechaBloqueoActual && (
-                        <p className="text-sm text-yellow-400">Fecha de bloqueo actual: {fechaBloqueoActual}</p>
-                    )}
-                    <p className="text-xs text-gray-500">
-                        Para desbloquear, simplemente borre la fecha y guarde.
-                    </p>
-                </div>
-                <div className="flex justify-end space-x-4 pt-8">
-                    <button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg">Cancelar</button>
-                    <button onClick={handleSubmit} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2 px-6 rounded-lg">Guardar Bloqueo</button>
-                </div>
-            </div>
-        </div>
-    );
-};
-const DescargarPlanoModal = ({isOpen, onClose, sedes, movimientos, terceros, cuentasContables, tiposGasto}) => {
-    if(!isOpen) return null;
-    const [sedeId, setSedeId] = useState('');
-    const [startDate, setStartDate] = useState('');
-    const [endDate, setEndDate] = useState('');
-    const [alertInfo, setAlertInfo] = useState({isOpen: false, message:''});
-
-    const handleDownload = () => {
-        if (!sedeId || !startDate || !endDate) {
-            setAlertInfo({isOpen: true, message: "Debe seleccionar una sede y un rango de fechas."});
-            return;
-        }
-        handleDescargarPlano(movimientos, terceros, cuentasContables, tiposGasto, sedes, parseInt(sedeId), startDate, endDate);
-        onClose();
-    }
-    
-    return (
-    <>
-    <AlertModal isOpen={alertInfo.isOpen} onClose={() => setAlertInfo({isOpen: false, message: ''})} title="Campos Requeridos" message={alertInfo.message} />
-    <div className="fixed inset-0 bg-black bg-opacity-60 z-50 flex justify-center items-center p-4">
-        <div className="bg-gray-800 p-8 rounded-xl shadow-2xl w-full max-w-lg border-t-4 border-cyan-500">
-            <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-white flex items-center"><DownloadCloud className="mr-3 text-cyan-400"/>Descargar Plano Contable (SIIGO)</h2>
-                <button onClick={onClose} className="text-gray-400 hover:text-white"><XCircle size={28}/></button>
-            </div>
-            <div className="space-y-4">
-                <div>
-                    <label className="block text-cyan-300 text-sm font-bold mb-2">Sede</label>
-                    <select value={sedeId} onChange={e => setSedeId(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500">
-                        <option value="">Seleccione una sede...</option>
-                        {sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}
-                    </select>
-                </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                        <label className="block text-cyan-300 text-sm font-bold mb-2">Fecha Inicial</label>
-                        <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"/>
-                    </div>
-                     <div>
-                        <label className="block text-cyan-300 text-sm font-bold mb-2">Fecha Final</label>
-                        <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-cyan-500"/>
-                    </div>
-                </div>
-            </div>
-            <div className="flex justify-end space-x-4 pt-8">
-                <button type="button" onClick={onClose} className="bg-gray-600 hover:bg-gray-500 text-white font-bold py-2 px-6 rounded-lg">Cancelar</button>
-                <button onClick={handleDownload} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2 px-6 rounded-lg flex items-center space-x-2"><Download size={18}/><span>Descargar</span></button>
-            </div>
-        </div>
-    </div>
-    </>
-    );
-};
-
-
-// -- DASHBOARDS --
-const SedeDashboard = ({ currentUser, onLogout, movimientos, ingresos, solicitudes, handleEnviarSoporte, viewDate, setViewDate, terceros, handleAnadirTercero, handleEditarTercero, handleAnadirMovimiento, handleAnadirIngreso, tiposGasto, cuentasContables, sedes, handleEditarMovimiento, handleEditarIngreso, fechaBloqueo, handleEliminarMovimiento, handleEliminarIngreso }) => {
-  const [isGastoModalOpen, setGastoModalOpen] = useState(false);
-  const [isIngresoModalOpen, setIngresoModalOpen] = useState(false);
-  const [isSolicitudesModalOpen, setSolicitudesModalOpen] = useState(false);
-  const [isTercerosModalOpen, setTercerosModalOpen] = useState(false);
-  const [editingMovimiento, setEditingMovimiento] = useState(null);
-  const [editingIngreso, setEditingIngreso] = useState(null);
-  const [confirmModalState, setConfirmModalState] = useState({ isOpen: false, onConfirm: null, title: '', message: '' });
-  const [localAlertInfo, setLocalAlertInfo] = useState({ isOpen: false, title: '', message: '', type: 'warning' });
-  const sedeInfo = sedes.find(s => s.id === currentUser.sedeId);
-  const printRef = useRef();
-  
-  const { allTransactions, saldo_inicialDelMes, totalIngresosMes, totalGastosMes } = useMemo(() => {
-    const historicoDate = new Date(viewDate);
-    historicoDate.setDate(1);
-    historicoDate.setHours(0, 0, 0, 0);
-
-    const gastosHistoricos = movimientos
-        .filter(m => m.id_sede === currentUser.sedeId && new Date(m.fecha_gasto) < historicoDate)
-        .reduce((sum, m) => sum + m.valor, 0);
-
-    const ingresosHistoricos = ingresos
-        .filter(i => i.id_sede === currentUser.sedeId && new Date(i.fecha_ingreso) < historicoDate)
-        .reduce((sum, i) => sum + i.valor, 0);
-
-    const saldo_inicialCalculado = sedeInfo.saldo_inicial + ingresosHistoricos - gastosHistoricos;
-    
-    const filterByMonth = (item) => {
-        const itemDate = new Date(item.fecha_gasto || item.fecha_ingreso);
-        return item.id_sede === currentUser.sedeId && itemDate.getFullYear() === viewDate.getFullYear() && itemDate.getMonth() === viewDate.getMonth();
-    };
-    
-    const gastosMes = movimientos.filter(filterByMonth).map(m => ({ ...m, type: 'gasto' }));
-    const ingresosMes = ingresos.filter(filterByMonth).map(i => ({ ...i, type: 'ingreso' }));
-    
-    const all = [...gastosMes, ...ingresosMes].sort((a, b) => new Date(b.fecha_gasto || b.fecha_ingreso) - new Date(a.fecha_gasto || a.fecha_ingreso));
-    
-    const totalGastosDelMes = gastosMes.reduce((sum, mov) => sum + mov.valor, 0);
-    const totalIngresosDelMes = ingresosMes.reduce((sum, i) => sum + i.valor, 0);
-
-    return { 
-        allTransactions: all, 
-        saldo_inicialDelMes: saldo_inicialCalculado,
-        totalIngresosMes: totalIngresosDelMes,
-        totalGastosMes: totalGastosDelMes
-    };
-  }, [movimientos, ingresos, currentUser.sedeId, viewDate, sedeInfo.saldo_inicial]);
-
-  const saldoFinal = saldo_inicialDelMes + totalIngresosMes - totalGastosMes;
-  const solicitudesPendientes = movimientos.filter(m => m.id_sede === currentUser.sedeId && m.soporteRequerido && !m.soporteEnviado).length;
-  
-  const handleEditGastoClick = (movimiento) => { setEditingMovimiento(movimiento); };
-  const handleEditIngresoClick = (ingreso) => { setEditingIngreso(ingreso); };
-  const changeMonth = (offset) => { setViewDate(d => { const n = new Date(d); n.setMonth(n.getMonth() + offset); return n; }); };
-  
-  const openConfirmation = (onConfirm, title, message) => {
-      setConfirmModalState({ isOpen: true, onConfirm: () => { onConfirm(); closeConfirmation(); }, title, message });
-  };
-  const closeConfirmation = () => setConfirmModalState({ isOpen: false, onConfirm: null, title: '', message: '' });
-
-  const handleOpenGastoModal = () => {
-    if (fechaBloqueo) {
-        const lockDate = new Date(fechaBloqueo);
-        const endOfLockMonth = new Date(lockDate.getFullYear(), lockDate.getMonth() + 1, 0);
-        const startOfViewMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-
-        if (startOfViewMonth <= endOfLockMonth) {
-            setLocalAlertInfo({
-                isOpen: true,
-                title: "Mes Bloqueado",
-                message: "El mes se encuentra bloqueado, no se puede ingresar información. Comuníquese con el administrador.",
-                type: 'error'
-            });
-            return;
-        }
-    }
-    setGastoModalOpen(true);
-  };
-
-  const handleOpenIngresoModal = () => {
-      if (fechaBloqueo) {
-        const lockDate = new Date(fechaBloqueo);
-        const endOfLockMonth = new Date(lockDate.getFullYear(), lockDate.getMonth() + 1, 0);
-        const startOfViewMonth = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-
-        if (startOfViewMonth <= endOfLockMonth) {
-            setLocalAlertInfo({
-                isOpen: true,
-                title: "Mes Bloqueado",
-                message: "El mes se encuentra bloqueado, no se puede ingresar información. Comuníquese con el administrador.",
-                type: 'error'
-            });
-            return;
-        }
-    }
-    setIngresoModalOpen(true);
-  };
-
-  const handlePrintPDF = () => {
-    const input = printRef.current;
-    if (typeof window.jspdf === 'undefined' || typeof window.html2canvas === 'undefined') {
-        alert('Las librerías para generar PDF aún se están cargando. Por favor, espere un momento e intente de nuevo.');
-        return;
-    }
-    const { jsPDF } = window.jspdf;
-    const pdf = new jsPDF('p', 'mm', 'a4');
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    
-    pdf.setFontSize(16);
-    pdf.text("La Calera Colombia SA", pdfWidth / 2, 15, { align: 'center' });
-    pdf.setFontSize(12);
-    pdf.text(`Sede: ${sedeInfo.nombre}`, 14, 25);
-    pdf.text(`Fecha Impresión: ${new Date().toLocaleString('es-CO')}`, pdfWidth - 14, 25, { align: 'right' });
-    pdf.setLineWidth(0.5);
-    pdf.line(14, 28, pdfWidth - 14, 28);
-    
-    window.html2canvas(input).then((canvas) => {
-        const imgData = canvas.toDataURL('image/png');
-        const imgProps = pdf.getImageProperties(imgData);
-        const imgWidth = pdfWidth - 28;
-        const imgHeight = (imgProps.height * imgWidth) / imgProps.width;
-        pdf.addImage(imgData, 'PNG', 14, 35, imgWidth, imgHeight);
-        pdf.save(`Reporte_${sedeInfo.nombre}_${MESES[viewDate.getMonth()]}_${viewDate.getFullYear()}.pdf`);
-    });
-  };
-
-  return (
-    <div className="bg-gray-900 min-h-screen text-white">
-      <AlertModal isOpen={localAlertInfo.isOpen} onClose={() => setLocalAlertInfo({isOpen: false, title: '', message: '', type: 'warning'})} title={localAlertInfo.title} message={localAlertInfo.message} type={localAlertInfo.type} />
-      <Header currentUser={currentUser} onLogout={onLogout} />
-      <ConfirmationModal isOpen={confirmModalState.isOpen} onClose={closeConfirmation} onConfirm={confirmModalState.onConfirm} title={confirmModalState.title} message={confirmModalState.message} />
-      <GastoModal isOpen={isGastoModalOpen} onClose={() => setGastoModalOpen(false)} sedeId={currentUser.sedeId} terceros={terceros} handleAnadirMovimiento={handleAnadirMovimiento} tiposGasto={tiposGasto} cuentasContables={cuentasContables} />
-      <IngresoModal isOpen={isIngresoModalOpen} onClose={() => setIngresoModalOpen(false)} sedeId={currentUser.sedeId} handleAnadirIngreso={handleAnadirIngreso} />
-      <EditGastoModal isOpen={!!editingMovimiento} onClose={() => setEditingMovimiento(null)} movimiento={editingMovimiento} handleEditarMovimiento={handleEditarMovimiento} terceros={terceros} tiposGasto={tiposGasto} cuentasContables={cuentasContables} />
-      <EditIngresoModal isOpen={!!editingIngreso} onClose={() => setEditingIngreso(null)} ingreso={editingIngreso} handleEditarIngreso={handleEditarIngreso} />
-      <SolicitudesModal isOpen={isSolicitudesModalOpen} onClose={() => setSolicitudesModalOpen(false)} sedeId={currentUser.sedeId} movimientos={movimientos} handleEnviarSoporte={handleEnviarSoporte} terceros={terceros}/>
-      <GestionarTercerosModal isOpen={isTercerosModalOpen} onClose={()=>setTercerosModalOpen(false)} sedeId={currentUser.sedeId} terceros={terceros} handleAnadirTercero={handleAnadirTercero} handleEditarTercero={handleEditarTercero} />
-
-      <main className="p-8">
-        <div className="bg-sky-950 p-6 rounded-xl shadow-xl mb-8">
-            <div className="flex justify-between items-center mb-4"><h2 className="text-2xl font-bold text-teal-300">Dashboard: {sedeInfo.nombre}</h2><div className="flex items-center space-x-2"><button onClick={() => changeMonth(-1)} className="p-2 bg-sky-800 rounded-md hover:bg-sky-700"><ChevronsLeft/></button><span className="font-semibold text-lg w-48 text-center">{MESES[viewDate.getMonth()]} {viewDate.getFullYear()}</span><button onClick={() => changeMonth(1)} className="p-2 bg-sky-800 rounded-md hover:bg-sky-700"><ChevronsRight/></button></div></div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 text-center">
-                <div className="bg-gray-800 p-4 rounded-lg"><p className="text-sm text-gray-400">Saldo Inicial</p><p className="text-2xl font-semibold">${new Intl.NumberFormat('es-CO').format(saldo_inicialDelMes)}</p></div>
-                <div className="bg-gray-800 p-4 rounded-lg"><p className="text-sm text-gray-400">Total Ingresos</p><p className="text-2xl font-semibold text-green-400">+ ${new Intl.NumberFormat('es-CO').format(totalIngresosMes)}</p></div>
-                <div className="bg-gray-800 p-4 rounded-lg"><p className="text-sm text-gray-400">Total Gastos</p><p className="text-2xl font-semibold text-red-400">- ${new Intl.NumberFormat('es-CO').format(totalGastosMes)}</p></div>
-                <div className="bg-teal-800 p-4 rounded-lg"><p className="text-sm text-teal-200">Saldo Final</p><p className="text-2xl font-bold text-white">${new Intl.NumberFormat('es-CO').format(saldoFinal)}</p></div>
-            </div>
-        </div>
-        
-        <div className="flex flex-wrap items-center gap-4 mb-8">
-            <button onClick={handleOpenIngresoModal} className="bg-green-600 hover:bg-green-700 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><TrendingUp size={20} /><span>Registrar Ingreso</span></button>
-            <button onClick={handleOpenGastoModal} className="bg-red-600 hover:bg-red-700 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><PlusCircle size={20} /><span>Registrar Gasto</span></button>
-            <button onClick={() => setTercerosModalOpen(true)} className="bg-sky-700 hover:bg-sky-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><UserPlus size={20}/><span>Gestionar Terceros</span></button>
-            <button onClick={handlePrintPDF} className="bg-sky-700 hover:bg-sky-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><Printer size={20}/><span>Imprimir PDF</span></button>
-            <button onClick={() => setSolicitudesModalOpen(true)} className="relative bg-orange-600 hover:bg-orange-700 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2">
-                <Bell size={20}/><span>Solicitudes</span>
-                {solicitudesPendientes > 0 && <span className="absolute -top-2 -right-2 bg-red-500 text-white text-xs rounded-full h-6 w-6 flex items-center justify-center">{solicitudesPendientes}</span>}
-            </button>
-        </div>
-
-        <div className="bg-sky-950 p-6 rounded-xl shadow-xl" ref={printRef}>
-             <h3 className="text-xl font-bold mb-4 text-teal-300">Historial de Transacciones de {MESES[viewDate.getMonth()]}</h3>
-             <div className="overflow-x-auto"><table className="w-full text-left">
-                     <thead><tr className="border-b border-gray-700"><th className="p-3">Tipo</th><th className="p-3">Fecha</th><th className="p-3">Concepto/Tercero</th><th className="p-3">Detalle</th><th className="p-3 text-right">Valor</th><th className="p-3 text-center">Acciones</th></tr></thead>
-                     <tbody>
-                        {allTransactions.length > 0 ? allTransactions.map(mov => {
-                            const isGasto = mov.type === 'gasto';
-                            const fecha = isGasto ? mov.fecha_gasto : mov.fecha_ingreso;
-                            const tercero = isGasto ? terceros.find(t => t.id === mov.id_tercero) : null;
-                            const isPending = isGasto && mov.soporteRequerido && !mov.soporteEnviado;
-
-                            const lockDate = fechaBloqueo ? new Date(`${fechaBloqueo}T00:00:00-05:00`) : null;
-                            const transactionDate = new Date(`${fecha}T00:00:00-05:00`);
-                            const isLocked = lockDate && transactionDate <= lockDate;
-
-                            return (
-                                <tr key={`${mov.type}-${mov.id}`} className="border-b border-gray-800 hover:bg-sky-900">
-                                    <td className="p-3"><span className={`font-bold px-2 py-1 rounded-full text-xs ${isGasto ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'}`}>{isGasto ? 'GASTO' : 'INGRESO'}</span></td>
-                                    <td className="p-3">{fecha}</td>
-                                    <td className="p-3">{isGasto ? (tercero ? tercero.nombre : 'N/A') : mov.concepto}</td>
-                                    <td className="p-3">{isGasto ? mov.detalle : mov.observaciones}</td>
-                                    <td className={`p-3 text-right font-semibold ${isGasto ? 'text-red-300' : 'text-green-300'}`}>{isGasto ? '-' : '+'} ${new Intl.NumberFormat('es-CO').format(mov.valor)}</td>
-                                    <td className="p-3 text-center">
-                                      {isLocked ? (
-                                        <div className="flex items-center justify-center text-gray-500" title={`Bloqueado el ${fechaBloqueo}`}>
-                                            <Lock size={18} />
-                                        </div>
-                                      ) : (
-                                        <div className="flex items-center justify-center space-x-3">
-                                            {isGasto && isPending ? (
-                                                <button onClick={() => setSolicitudesModalOpen(true)} className="text-orange-400 hover:text-orange-300 font-semibold flex items-center justify-center w-full"><Bell size={18} className="mr-2"/> Responder</button>
-                                            ) : (
-                                                <>
-                                                    <button onClick={() => isGasto ? handleEditGastoClick(mov) : handleEditIngresoClick(mov)} className="text-teal-400 hover:text-teal-300"><Edit size={18}/></button>
-                                                    <button onClick={() => openConfirmation(() => isGasto ? handleEliminarMovimiento(mov.id) : handleEliminarIngreso(mov.id), `Eliminar ${isGasto ? 'Gasto' : 'Ingreso'}`, `¿Está seguro que desea eliminar esta transacción? Esta acción no se puede deshacer.`)} className="text-red-500 hover:text-red-400"><Trash2 size={18} /></button>
-                                                </>
-                                            )}
-                                        </div>
-                                      )}
-                                    </td>
-                                </tr>
-                            )
-                        }) : <tr><td colSpan="6" className="text-center text-gray-500 py-8">No hay transacciones para este mes.</td></tr>}
-                     </tbody>
-                 </table></div>
-        </div>
-      </main>
-    </div>
-  );
-};
-const AdminDashboard = ({ currentUser, onLogout, movimientos, ingresos, solicitudes, handleSolicitarSoporte, viewDate, setViewDate, terceros, tiposGasto, cuentasContables, handleAnadirTipoGasto, sedes, handleSeguridadSede, adminPassword, handleChangeAdminPassword, handleAnadirSede, handleCargaMasivaCuentas, handleCargaMasivaTerceros, setAlertInfo, handleEditarCuentaContable, handleEditarTipoGasto, fechaBloqueo, handleSetFechaBloqueo, handleAnadirCuentaContable }) => {
-  const [filtroSede, setFiltroSede] = useState(sedes.length > 0 ? sedes[0].id : '');
-  const [viendoSoporte, setViendoSoporte] = useState(null);
-  const [isCargaModalOpen, setCargaModalOpen] = useState(false);
-  const [isTiposCuentasModalOpen, setTiposCuentasModalOpen] = useState(false);
-  const [isSeguridadModalOpen, setSeguridadModalOpen] = useState(false);
-  const [isSedesModalOpen, setSedesModalOpen] = useState(false);
-  const [isBloqueoFechaModalOpen, setBloqueoFechaModalOpen] = useState(false);
-  const [isPlanoModalOpen, setPlanoModalOpen] = useState(false);
-  
-  const resumenCajas = useMemo(() => {
-    return sedes.map(sede => {
-        const historicoDate = new Date(viewDate);
-        historicoDate.setDate(1);
-        historicoDate.setHours(0, 0, 0, 0);
-
-        const gastosHistoricos = movimientos
-            .filter(m => m.id_sede === sede.id && new Date(m.fecha_gasto) < historicoDate)
-            .reduce((sum, m) => sum + m.valor, 0);
-
-        const ingresosHistoricos = ingresos
-            .filter(i => i.id_sede === sede.id && new Date(i.fecha_ingreso) < historicoDate)
-            .reduce((sum, i) => sum + i.valor, 0);
-        
-        const saldo_inicialDelMes = sede.saldo_inicial + ingresosHistoricos - gastosHistoricos;
-
-        const filterByMonth = (item) => {
-            const d = new Date(item.fecha_gasto || item.fecha_ingreso);
-            return item.id_sede === sede.id && d.getFullYear() === viewDate.getFullYear() && d.getMonth() === viewDate.getMonth();
-        };
-        const gastosMes = movimientos.filter(filterByMonth).reduce((sum, m) => sum + m.valor, 0);
-        const ingresosMes = ingresos.filter(filterByMonth).reduce((sum, i) => sum + i.valor, 0);
-
-        const saldoFinal = saldo_inicialDelMes + ingresosMes - gastosMes;
-
-        return { ...sede, saldo_inicialMes: saldo_inicialDelMes, gastos: gastosMes, ingresos: ingresosMes, saldoFinal };
-    });
-  }, [sedes, movimientos, ingresos, viewDate]);
-
-  const allTransactionsSede = useMemo(() => {
-    const filterByMonth = (item) => {
-        const itemDate = new Date(item.fecha_gasto || item.fecha_ingreso);
-        return item.id_sede === filtroSede && itemDate.getFullYear() === viewDate.getFullYear() && itemDate.getMonth() === viewDate.getMonth();
-    };
-    const gastosMes = movimientos.filter(filterByMonth).map(m => ({ ...m, type: 'gasto' }));
-    const ingresosMes = ingresos.filter(filterByMonth).map(i => ({ ...i, type: 'ingreso' }));
-    return [...gastosMes, ...ingresosMes].sort((a, b) => new Date(b.fecha_registro) - new Date(a.fecha_registro));
-  }, [movimientos, ingresos, filtroSede, viewDate]);
-  
-  const changeMonth = (offset) => { setViewDate(d => { const n = new Date(d); n.setMonth(n.getMonth() + offset); return n; }); };
-
-  return (
-     <div className="bg-gray-900 min-h-screen text-white">
-      <Header currentUser={currentUser} onLogout={onLogout} />
-      <VerSoporteModal isOpen={!!viendoSoporte} onClose={() => setViendoSoporte(null)} solicitud={viendoSoporte} />
-      <CargaMasivaModal isOpen={isCargaModalOpen} onClose={() => setCargaModalOpen(false)} handleCargaMasivaCuentas={handleCargaMasivaCuentas} handleCargaMasivaTerceros={handleCargaMasivaTerceros} sedes={sedes} setAlertInfo={setAlertInfo} />
-      <GestionarTiposCuentasModal isOpen={isTiposCuentasModalOpen} onClose={() => setTiposCuentasModalOpen(false)} sedes={sedes} tiposGasto={tiposGasto} cuentasContables={cuentasContables} handleAnadirTipoGasto={handleAnadirTipoGasto} handleAnadirCuentaContable={handleAnadirCuentaContable} handleEditarTipoGasto={handleEditarTipoGasto} handleEditarCuentaContable={handleEditarCuentaContable} />
-      <SeguridadModal isOpen={isSeguridadModalOpen} onClose={() => setSeguridadModalOpen(false)} sedes={sedes} handleSeguridadSede={handleSeguridadSede} adminPassword={adminPassword} handleChangeAdminPassword={handleChangeAdminPassword} />
-      <GestionarSedesModal isOpen={isSedesModalOpen} onClose={() => setSedesModalOpen(false)} sedes={sedes} handleAnadirSede={handleAnadirSede} />
-      <BloquearFechaModal isOpen={isBloqueoFechaModalOpen} onClose={() => setBloqueoFechaModalOpen(false)} fechaBloqueoActual={fechaBloqueo} handleSetFechaBloqueo={handleSetFechaBloqueo} />
-      <DescargarPlanoModal isOpen={isPlanoModalOpen} onClose={() => setPlanoModalOpen(false)} sedes={sedes} movimientos={movimientos} terceros={terceros} cuentasContables={cuentasContables} tiposGasto={tiposGasto} />
-
-      <main className="p-8">
-        <div className="flex flex-wrap items-center gap-4 mb-8">
-            <button onClick={() => setSedesModalOpen(true)} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><Home size={16}/><span>Gestionar Sedes</span></button>
-            <button onClick={() => setTiposCuentasModalOpen(true)} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><User size={16}/><span>Gestionar Tipos/Cuentas</span></button>
-            <button onClick={() => setCargaModalOpen(true)} className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><UploadCloud size={16}/><span>Cargas Masivas</span></button>
-            <button onClick={() => setPlanoModalOpen(true)} className="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><DownloadCloud size={16}/><span>Descargar Plano Contable</span></button>
-            <button onClick={() => setSeguridadModalOpen(true)} className="bg-yellow-500 hover:bg-yellow-600 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><ShieldCheck size={16}/><span>Gestionar Seguridad</span></button>
-            <button onClick={() => setBloqueoFechaModalOpen(true)} className="bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-5 rounded-lg flex items-center space-x-2"><Lock size={16}/><span>Bloquear por Fecha</span></button>
-        </div>
-        
-        <div className="bg-sky-950 p-6 rounded-xl shadow-xl mb-8">
-             <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-bold text-teal-300">Estado de Cajas</h3><div className="flex items-center space-x-2"><button onClick={() => changeMonth(-1)} className="p-2 bg-sky-800 rounded-md hover:bg-sky-700"><ChevronsLeft/></button><span className="font-semibold text-lg w-48 text-center">{MESES[viewDate.getMonth()]} {viewDate.getFullYear()}</span><button onClick={() => changeMonth(1)} className="p-2 bg-sky-800 rounded-md hover:bg-sky-700"><ChevronsRight/></button></div></div>
-             <div className="overflow-x-auto"><table className="w-full text-left">
-                     <thead><tr className="border-b border-gray-700"><th className="p-3">Sede</th><th className="p-3 text-right">Saldo Inicial</th><th className="p-3 text-right">Ingresos</th><th className="p-3 text-right">Gastos</th><th className="p-3 text-right">Saldo Final</th></tr></thead>
-                     <tbody>
-                        {resumenCajas.map(sede => (
-                          <tr key={sede.id} className="border-b border-gray-800 hover:bg-sky-900">
-                              <td className="p-3 font-semibold">{sede.nombre}</td>
-                              <td className="p-3 text-right">${new Intl.NumberFormat('es-CO').format(sede.saldo_inicialMes)}</td>
-                              <td className="p-3 text-right text-green-400">+ ${new Intl.NumberFormat('es-CO').format(sede.ingresos)}</td>
-                              <td className="p-3 text-right text-red-400">- ${new Intl.NumberFormat('es-CO').format(sede.gastos)}</td>
-                              <td className="p-3 text-right font-bold text-teal-300">${new Intl.NumberFormat('es-CO').format(sede.saldoFinal)}</td>
-                          </tr>
-                        ))}
-                     </tbody>
-                 </table></div>
-        </div>
-
-         <div className="bg-sky-950 p-6 rounded-xl shadow-xl">
-             <div className="flex justify-between items-center mb-4"><h3 className="text-xl font-bold text-teal-300">Auditoría de Movimientos</h3><div className="flex items-center space-x-2"><label>Sede:</label><select value={filtroSede} onChange={e => setFiltroSede(parseInt(e.target.value))} className="bg-gray-700 text-white p-2 rounded-lg border border-gray-600">{sedes.map(s => <option key={s.id} value={s.id}>{s.nombre}</option>)}</select></div></div>
-             <div className="overflow-x-auto"><table className="w-full text-left">
-                     <thead><tr className="border-b border-gray-700"><th className="p-3">Tipo</th><th className="p-3">Fecha Gasto</th><th className="p-3">Fecha Registro</th><th className="p-3">Concepto/Tercero</th><th className="p-3 text-right">Valor</th><th className="p-3 text-center">Acción</th></tr></thead>
-                     <tbody>
-                        {allTransactionsSede.length > 0 ? allTransactionsSede.map(mov => {
-                           const isGasto = mov.type === 'gasto';
-                           const tercero = isGasto ? terceros.find(t => t.id === mov.id_tercero) : null;
-                           const solicitud = isGasto ? solicitudes.find(s => s.id_movimiento === mov.id) : null;
-                           return (
-                                <tr key={`${mov.type}-${mov.id}`} className="border-b border-gray-800 hover:bg-sky-900">
-                                    <td className="p-3"><span className={`font-bold px-2 py-1 rounded-full text-xs ${isGasto ? 'bg-red-900 text-red-300' : 'bg-green-900 text-green-300'}`}>{isGasto ? 'GASTO' : 'INGRESO'}</span></td>
-                                    <td className="p-3">{isGasto ? mov.fecha_gasto : mov.fecha_ingreso}</td>
-                                    <td className="p-3 text-gray-400">{new Date(mov.fecha_registro).toLocaleString('es-CO')}</td>
-                                    <td className="p-3">{isGasto ? (tercero ? tercero.nombre : 'N/A') : mov.concepto}</td>
-                                    <td className={`p-3 text-right font-semibold ${isGasto ? 'text-red-300' : 'text-green-300'}`}>{isGasto ? '-' : '+'} ${new Intl.NumberFormat('es-CO').format(mov.valor)}</td>
-                                    <td className="p-3 text-center">
-                                      {isGasto && mov.soporteEnviado && solicitud ? (<button onClick={() => setViendoSoporte(solicitud)} className="bg-green-600 text-white text-sm font-semibold py-1 px-3 rounded-full flex items-center mx-auto hover:bg-green-500"><Paperclip size={14} className="mr-2"/> Ver</button>) : isGasto && mov.soporteRequerido ? (<span className="bg-yellow-600 text-white text-sm font-semibold py-1 px-3 rounded-full">Pendiente</span>) : isGasto ? (<button onClick={() => handleSolicitarSoporte(mov.id)} className="bg-orange-600 hover:bg-orange-700 text-white text-sm font-semibold py-1 px-3 rounded-full">Solicitar</button>) : ('-')}
-                                    </td>
-                                </tr>
-                           )
-                        }) : <tr><td colSpan="6" className="text-center text-gray-500 py-8">No hay transacciones para esta sede en este mes.</td></tr>}
-                     </tbody>
-                 </table></div>
-        </div>
-      </main>
-     </div>
-  )
-};
-const LoginScreen = ({ onLogin, sedes, adminPassword }) => {
-  const [password, setPassword] = useState('');
-  const [adminLogin, setAdminLogin] = useState(false);
-  const [sedeLogin, setSedeLogin] = useState(null);
-  const [error, setError] = useState('');
-  const [info, setInfo] = useState({isOpen: false, message: ''});
-
-  const handleSedeClick = (sede) => {
-    if (sede.blocked) {
-      setInfo({isOpen: true, message: `El usuario de la sede ${sede.nombre} se encuentra bloqueado.`});
+    // 1) Buscar localmente primero
+    const insumoLocal = insumos.find(i => i.sku === sku);
+    if (insumoLocal) {
+      setCurrentInsumo(prev => ({
+        ...prev,
+        insumoId: cleaned,
+        nombre: insumoLocal.nombre,
+        unidadPrincipal: insumoLocal.unidadPrincipal,
+        cantidadPrincipal: insumoLocal.cantidadPrincipal,
+        unidadSecundaria: insumoLocal.unidadSecundaria,
+        factorConversion: insumoLocal.factorConversion,
+        stockMinimo: insumoLocal.stockMinimo
+      }));
       return;
     }
-    if(sede.password) {
-        setSedeLogin(sede);
-    } else {
-        onLogin({ id_usuario: sede.id_usuario, sedeId: sede.id });
-    }
-  }
 
-  const handlePasswordSubmit = (e) => {
-      e.preventDefault();
-      if(adminLogin) {
-          if (password === adminPassword) { onLogin({ id_usuario: 'ADMIN', sedeId: null }); }
-          else { setError('Contraseña incorrecta.'); }
-      } else if (sedeLogin) {
-          if (password === sedeLogin.password) { onLogin({ id_usuario: sedeLogin.id_usuario, sedeId: sedeLogin.id }); }
-          else { setError('Contraseña incorrecta.'); }
+    // 2) Si no está local, consultar la DB remota por SKU
+    try {
+      const { data: remote, error } = await supabase.from('insumos').select('*').eq('sku', sku).maybeSingle();
+      if (error) {
+        console.error('Error buscando insumo remoto:', error);
       }
-      setPassword('');
-  }
-
-  const handleForgotPassword = () => { setInfo({isOpen: true, message:'Se ha enviado un recordatorio al correo yezid.rodriguez@lacaleracolombia.com.co'}); setError(''); }
-  
-  const clearLogin = () => { setAdminLogin(false); setSedeLogin(null); setError(''); setPassword(''); }
-
-  if(adminLogin || sedeLogin) {
-      return (
-        <div className="bg-gray-900 min-h-screen flex flex-col justify-center items-center p-4">
-          <AlertModal isOpen={info.isOpen} onClose={() => setInfo({isOpen: false, message:''})} title="Información" message={info.message}/>
-          <div className="text-center mb-10"><h1 className="text-4xl font-bold text-white">Ingreso a Sede: {sedeLogin?.nombre || 'Administrador'}</h1></div>
-          <div className="bg-sky-950 p-8 rounded-2xl shadow-2xl w-full max-w-md">
-            <form onSubmit={handlePasswordSubmit} className="space-y-4">
-                 <label className="block text-white text-center">Ingrese la contraseña</label>
-                 <input type="password" value={password} onChange={e => {setPassword(e.target.value); setError('')}} className="w-full bg-gray-700 text-white p-3 rounded-lg border border-gray-600 focus:outline-none focus:ring-2 focus:ring-teal-500 text-center"/>
-                 {error && <p className="text-red-500 text-sm text-center">{error}</p>}
-                 <button type="submit" className="w-full bg-teal-500 hover:bg-teal-600 text-white font-bold py-3 rounded-lg">Ingresar</button>
-                 <button type="button" onClick={clearLogin} className="w-full text-sm text-gray-400 hover:text-white text-center mt-2">Volver a la selección de sede</button>
-                 {adminLogin && <button type="button" onClick={handleForgotPassword} className="w-full text-sm text-sky-400 hover:text-sky-300 text-center mt-2">¿Olvidó su contraseña?</button>}
-             </form>
-          </div>
-        </div>
-      );
-  }
-
-  return (
-    <div className="bg-gray-900 min-h-screen flex flex-col justify-center items-center p-4">
-      <AlertModal isOpen={info.isOpen} onClose={() => setInfo({isOpen: false, message:''})} title="Usuario Bloqueado" message={info.message}/>
-      <div className="text-center mb-10"><Building size={60} className="mx-auto text-teal-400 mb-4" /><h1 className="text-4xl font-bold text-white">Sistema de Registro de Gastos</h1><p className="text-xl text-gray-400 mt-2">La Calera Colombia SA</p></div>
-      <div className="bg-sky-950 p-8 rounded-2xl shadow-2xl w-full max-w-md">
-        <h2 className="text-center text-xl text-teal-300 font-semibold mb-6">Seleccione su punto de acceso:</h2>
-        <div className="space-y-4">
-          {sedes.map(sede => (<button key={sede.id} onClick={() => handleSedeClick(sede)} disabled={sede.blocked} className={`w-full text-white font-bold py-4 rounded-lg text-lg transition-transform transform hover:scale-105 ${sede.blocked ? 'bg-gray-600 cursor-not-allowed' : 'bg-teal-500 hover:bg-teal-600'}`}>{sede.nombre} {sede.blocked && '(Bloqueado)'}</button>))}
-        </div>
-        <div className="border-t border-gray-700 my-6"></div>
-        <button onClick={() => setAdminLogin(true)} className="w-full bg-sky-700 hover:bg-sky-600 text-white font-bold py-3 rounded-lg flex items-center justify-center space-x-2 transition-colors"><Lock size={20} /><span>Acceso de Administrador</span></button>
-      </div>
-       <p className="text-gray-600 text-sm mt-8">&copy; {new Date().getFullYear()} - Desarrollado para La Calera Colombia SA</p>
-    </div>
-  );
-};
-
-const handleDescargarPlano = (movimientos, terceros, cuentasContables, tiposGasto, sedes, sedeId, startDate, endDate) => {
-    if (typeof window.XLSX === 'undefined') {
-        alert('La librería para generar Excel aún se está cargando. Por favor, espere un momento e intente de nuevo.');
+      if (remote) {
+        const mapped = {
+          proveedorId: remote.proveedor_id,
+          categoriaId: remote.categoria_id,
+          insumoId: remote.insumo_id,
+          nombre: remote.nombre,
+          unidadPrincipal: remote.unidad_principal,
+          cantidadPrincipal: remote.cantidad_principal,
+          unidadSecundaria: remote.unidad_secundaria,
+          factorConversion: remote.factor_conversion,
+          stockMinimo: remote.stock_minimo,
+          sku: remote.sku
+        };
+        setCurrentInsumo(prev => ({ ...prev, ...mapped }));
+        // Añadir al listado local si no existe para acelerar futuras búsquedas
+        setInsumos(prev => (prev.find(i => i.sku === mapped.sku) ? prev : [...prev, mapped]));
         return;
+      }
+    } catch (e) {
+      console.error('Excepción buscando insumo remoto:', e);
     }
 
-    const centroDeCostoMap = { 1: { cc: '3', scc: '1' }, 2: { cc: '2', scc: '2' }, 3: { cc: '2', scc: '3' }, 4: { cc: '2', scc: '5' }, default: { cc: '3', scc: '1' } };
-    const sDate = new Date(`${startDate}T00:00:00-05:00`);
-    const eDate = new Date(`${endDate}T23:59:59-05:00`);
+    // 3) Si no se encontró en ningún lado, limpiar/establecer valores por defecto
+    setCurrentInsumo(prev => ({
+      ...prev,
+      insumoId: cleaned,
+      nombre: '',
+      unidadPrincipal: '',
+      cantidadPrincipal: 1,
+      unidadSecundaria: '',
+      factorConversion: 1,
+      stockMinimo: 0
+    }));
+  };
 
-    const filteredMovimientos = movimientos.filter(m => {
-        const movDate = new Date(m.fecha_gasto);
-        return m.id_sede === sedeId && movDate >= sDate && movDate <= eDate;
-    });
+  const [formData, setFormData] = useState({
+    bodegaOrigen: 1,
+    bodegaDestino: 2,
+    clienteDestino: '001', 
+    fecha: new Date().toISOString().slice(0,10),
+    items: [{ sku: '', cantidad: '', unidad: '' }],
+    observaciones: '',
+    notaSiigo: ''
+  });
 
-    const header = [
-        "TIPO DE COMPROBANTE (OBLIGATORIO)", "CÓDIGO COMPROBANTE (OBLIGATORIO)", "NÚMERO DE DOCUMENTO", "CUENTA CONTABLE (OBLIGATORIO)", "DÉBITO O CRÉDITO (OBLIGATORIO)", "VALOR DE LA SECUENCIA (OBLIGATORIO)", "AÑO DEL DOCUMENTO", "MES DEL DOCUMENTO", "DÍA DEL DOCUMENTO", "CÓDIGO DEL VENDEDOR", "CÓDIGO DE LA CIUDAD", "CÓDIGO DE LA ZONA", "SECUENCIA", "CENTRO DE COSTO", "SUBCENTRO DE COSTO", "NIT", "SUCURSAL", "DESCRIPCIÓN DE LA SECUENCIA"
-    ];
+  // --- ESTADO EDICION NOTA TRASLADO EN HISTORIAL ---
+  const [editingNotaId, setEditingNotaId] = useState(null);
+  const [tempNotaValue, setTempNotaValue] = useState('');
 
-    const dataRows = filteredMovimientos.flatMap(mov => {
-        const tipoGasto = tiposGasto.find(tg => tg.id === mov.id_tipo_gasto) || {};
-        const cuenta = cuentasContables.find(c => c.id === tipoGasto.id_cuenta) || {};
-        const tercero = terceros.find(t => t.id === mov.id_tercero) || {};
-        const cc_scc = centroDeCostoMap[mov.id_sede] || centroDeCostoMap.default;
-        const fecha = new Date(mov.fecha_gasto + 'T00:00:00');
+  // --- LÓGICA DE NEGOCIO ---
+  const generarSKU = (prov, cat, insumo) => `${prov}-${cat}-${insumo}`;
 
-        const rowGasto = {};
-        rowGasto[header[0]] = 'L';
-        rowGasto[header[1]] = 11;
-        rowGasto[header[2]] = '';
-        rowGasto[header[3]] = cuenta.numero || '';
-        rowGasto[header[4]] = 'D';
-        rowGasto[header[5]] = mov.valor;
-        rowGasto[header[6]] = fecha.getFullYear();
-        rowGasto[header[7]] = fecha.getMonth() + 1;
-        rowGasto[header[8]] = fecha.getDate();
-        rowGasto[header[9]] = '';
-        rowGasto[header[10]] = '';
-        rowGasto[header[11]] = '';
-        rowGasto[header[12]] = '';
-        rowGasto[header[13]] = cc_scc.cc;
-        rowGasto[header[14]] = cc_scc.scc;
-        rowGasto[header[15]] = tercero.nit_cc || '';
-        rowGasto[header[16]] = '';
-        rowGasto[header[17]] = mov.detalle || '';
-        
-        const rowCaja = {};
-        rowCaja[header[0]] = 'L';
-        rowCaja[header[1]] = 11;
-        rowCaja[header[2]] = '';
-        rowCaja[header[3]] = '11050501';
-        rowCaja[header[4]] = 'C';
-        rowCaja[header[5]] = mov.valor;
-        rowCaja[header[6]] = fecha.getFullYear();
-        rowCaja[header[7]] = fecha.getMonth() + 1;
-        rowCaja[header[8]] = fecha.getDate();
-        rowCaja[header[9]] = '';
-        rowCaja[header[10]] = '';
-        rowCaja[header[11]] = '';
-        rowCaja[header[12]] = '';
-        rowCaja[header[13]] = cc_scc.cc;
-        rowCaja[header[14]] = cc_scc.scc;
-        rowCaja[header[15]] = '900188032';
-        rowCaja[header[16]] = '';
-        rowCaja[header[17]] = `Pago ${mov.detalle}`;
+  // Formatea números con separador de miles como punto: 19000 -> 19.000
+  const formatNumber = (val) => {
+    if (val === null || val === undefined || val === '') return '0';
+    const s = String(val).replace(/,/g, '').replace(/\s+/g, '');
+    if (s === '') return '0';
+    if (isNaN(Number(s))) return val;
+    const parts = s.split('.');
+    parts[0] = parts[0].replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+    return parts.join('.');
+  };
 
-        return [rowGasto, rowCaja];
-    });
+  const showError = (err, prefix = 'Error') => {
+    try {
+      console.error(prefix, err);
+      let msg = '';
+      if (!err) {
+        msg = '(objeto de error vacío)';
+      } else if (typeof err === 'string') {
+        msg = err;
+      } else if (err instanceof Error) {
+        msg = err.message + '\n' + (err.stack || '');
+      } else if (err.message || err.error || err.details || err.hint) {
+        msg = [err.message, err.error, err.details, err.hint].filter(Boolean).join(' | ');
+      } else {
+        try {
+          const props = Object.getOwnPropertyNames(err);
+          if (props.length) {
+            msg = props.map(k => `${k}: ${JSON.stringify(err[k])}`).join(' ; ');
+          } else {
+            msg = JSON.stringify(err);
+          }
+        } catch (e) {
+          msg = String(err);
+        }
+      }
+      alert(`${prefix}: ${msg}`);
+    } catch (e) {
+      console.error('showError failed', e);
+      alert(prefix + ': (error desconocido)');
+    }
+  }
 
-    const ws_data = [header, ...dataRows.map(row => header.map(h => row[h] || ''))];
-    const ws = window.XLSX.utils.aoa_to_sheet(ws_data);
-    const wb = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, "Plano SIIGO");
-    const sedeNombre = sedes.find(s=>s.id === sedeId)?.nombre || 'Sede';
-    window.XLSX.writeFile(wb, `Plano_Contable_SIIGO_${sedeNombre}_${startDate}_a_${endDate}.xlsx`);
-};
-
-export default function App() {
-  const [currentUser, setCurrentUser] = useState(null);
-  const [loading, setLoading] = useState(true); // <-- Añadido el estado de carga
-
-  // Todos los estados ahora empiezan vacíos, se llenarán desde Supabase
-  const [movimientos, setMovimientos] = useState([]);
-  const [ingresos, setIngresos] = useState([]);
-  const [solicitudes, setSolicitudes] = useState([]);
-  const [terceros, setTerceros] = useState([]);
-  const [tiposGasto, setTiposGasto] = useState([]);
-  const [cuentasContables, setCuentasContables] = useState([]);
-  const [sedes, setSedes] = useState([]);
-  const [adminPassword, setAdminPassword] = useState('');
-  const [viewDate, setViewDate] = useState(new Date());
-  const [alertInfo, setAlertInfo] = useState({isOpen: false, title: '', message: '', type: 'warning'});
-  const [fechaBloqueo, setFechaBloqueo] = useState(null);
-
-  // useEffect para cargar TODOS los datos de la base de datos al iniciar
- useEffect(() => {
+  useEffect(() => {
     const fetchData = async () => {
-      setLoading(true);
-      try {
-        const [
-          sedesRes,
-          tercerosRes,
-          cuentasRes,
-          tiposGastoRes,
-          movimientosRes,
-          ingresosRes,
-          configRes
-        ] = await Promise.all([
-          supabase.from('sedes').select('*'),
-          supabase.from('terceros').select('*'),
-          supabase.from('cuentas_contables').select('*'),
-          supabase.from('tipos_gasto').select('*'),
-          supabase.from('movimientos').select('*'),
-          supabase.from('ingresos').select('*'),
-          supabase.from('config').select('admin_password, fecha_bloqueo').eq('id', 1).single()
-        ]);
-        
-        // Verificamos y asignamos los datos de forma segura, sin detener todo si algo falla
-        if (sedesRes.error) console.error("Error en sedes:", sedesRes.error);
-        else setSedes(sedesRes.data || []);
+      // Fetch Insumos
+      const { data: insumosData, error: insumosError } = await supabase.from('insumos').select('*');
+      if (insumosError) console.error('Error fetching insumos:', insumosError);
+      else setInsumos((insumosData || []).map(i => ({
+        sku: i.sku,
+        proveedorId: i.proveedor_id,
+        categoriaId: i.categoria_id,
+        insumoId: i.insumo_id,
+        nombre: i.nombre,
+        unidadPrincipal: i.unidad_principal,
+        cantidadPrincipal: i.cantidad_principal,
+        unidadSecundaria: i.unidad_secundaria,
+        factorConversion: i.factor_conversion,
+        stockMinimo: i.stock_minimo,
+      })));
 
-        if (tercerosRes.error) console.error("Error en terceros:", tercerosRes.error);
-        else setTerceros(tercerosRes.data || []);
-        
-        if (cuentasRes.error) console.error("Error en cuentas:", cuentasRes.error);
-        else setCuentasContables(cuentasRes.data || []);
-        
-        if (tiposGastoRes.error) console.error("Error en tipos de gasto:", tiposGastoRes.error);
-        else setTiposGasto(tiposGastoRes.data || []);
-        
-        if (movimientosRes.error) console.error("Error en movimientos:", movimientosRes.error);
-        else setMovimientos(movimientosRes.data || []);
-        
-        if (ingresosRes.error) console.error("Error en ingresos:", ingresosRes.error);
-        else setIngresos(ingresosRes.data || []);
-        
-        // Manejo especial para la configuración
-        if (configRes.error) {
-            console.error("No se encontró la fila de config, usando valores por defecto:", configRes.error);
-            setAdminPassword('LCC25'); // Contraseña por defecto si no hay en la BD
-        } else if (configRes.data) {
-            setAdminPassword(configRes.data.admin_password);
-            setFechaBloqueo(configRes.data.fecha_bloqueo);
+      // Fetch Stock
+      const { data: stockData, error: stockError } = await supabase.from('stock').select('*');
+      if (stockError) console.error('Error fetching stock:', stockError);
+      else {
+        const stockMap = {};
+        (stockData || []).forEach(s => {
+          if (!stockMap[s.insumo_sku]) stockMap[s.insumo_sku] = {};
+          stockMap[s.insumo_sku][s.bodega_id] = s.cantidad;
+        });
+        setStockPorBodega(stockMap);
+      }
+      
+
+      // Fetch Categorias, Proveedores, Clientes (con fallback local si la tabla no existe)
+      const { data: categoriasData, error: categoriasError } = await supabase.from('categorias').select('*');
+      if (categoriasError) {
+        console.error('Error fetching categorias:', categoriasError);
+        setCategorias(DEFAULT_CATEGORIES);
+      } else {
+        setCategorias((categoriasData && categoriasData.length > 0) ? categoriasData : DEFAULT_CATEGORIES);
+      }
+
+      const { data: proveedoresData, error: proveedoresError } = await supabase.from('proveedores').select('*');
+      if (proveedoresError) {
+        console.error('Error fetching proveedores:', proveedoresError);
+        setProveedores([]);
+      } else {
+        setProveedores(proveedoresData || []);
+      }
+
+      const { data: clientesData, error: clientesError } = await supabase.from('clientes').select('*');
+      if (clientesError) {
+        console.error('Error fetching clientes:', clientesError);
+        setClientes([]);
+      } else {
+        setClientes(clientesData || []);
+      }
+
+      
+      // Fetch Transacciones
+      const { data: transaccionesData, error: transaccionesError } = await supabase
+        .from('transacciones')
+        .select(`*, transaccion_items(*), bodega_origen:bodega_origen_id(nombre), bodega_destino:bodega_destino_id(nombre), cliente:cliente_id(nombre)`)
+        .order('fecha', { ascending: false });
+
+      if (transaccionesError) console.error('Error fetching transactions:', transaccionesError);
+      else {
+        setTransacciones((transaccionesData || []).map(t => ({
+          id: t.id,
+          fecha: new Date(t.fecha).toLocaleString(),
+          tipo: t.tipo,
+          detalle: t.detalle,
+          items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
+          observaciones: t.observaciones,
+          notaSiigo: t.nota_siigo,
+          bodegaOrigenId: t.bodega_origen_id,
+          bodegaDestinoId: t.bodega_destino_id,
+        })));
+      }
+      
+    };
+    fetchData();
+  }, []);
+
+  useEffect(() => {
+    console.log('activeTab initial:', activeTab);
+  }, []);
+
+  useEffect(() => {
+    console.log('activeTab changed =>', activeTab);
+  }, [activeTab]);
+
+  useEffect(() => {
+    const clickLogger = (e) => {
+      // log a short summary to avoid huge output
+      const tag = e.target && e.target.tagName ? e.target.tagName : String(e.target);
+      const cls = e.target && e.target.className ? (typeof e.target.className === 'string' ? e.target.className.split(' ').slice(0,3).join(' ') : '') : '';
+      console.log('DOM click on:', tag, cls);
+    };
+    window.addEventListener('click', clickLogger);
+    return () => window.removeEventListener('click', clickLogger);
+  }, []);
+
+  const agregarTransaccion = async (tipo, data) => {
+    const { data: transaccion, error } = await supabase
+      .from('transacciones')
+      .insert({
+        tipo: tipo,
+        detalle: data.detalle,
+        observaciones: data.observaciones,
+        nota_siigo: data.notaSiigo,
+        bodega_origen_id: data.bodegaOrigenId,
+        bodega_destino_id: data.bodegaDestinoId,
+        cliente_id: data.clienteDestino,
+        fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
+      }).select().single();
+
+    if (error) {
+      console.error("Error creating transaction: ", error);
+      alert("Error al crear la transacción.");
+      return;
+    }
+
+    if(data.items && data.items.length > 0) {
+      const itemsToInsert = data.items.map(item => ({
+        transaccion_id: transaccion.id,
+        insumo_sku: item.sku,
+        cantidad: item.cantidad
+      }));
+      const { error: itemsError } = await supabase.from('transaccion_items').insert(itemsToInsert);
+      if (itemsError) console.error("Error creating transaction items: ", itemsError);
+    }
+    
+    // Refresh transactions from DB
+    const { data: transaccionesData } = await supabase
+      .from('transacciones')
+      .select(`*, transaccion_items(*), bodega_origen:bodega_origen_id(nombre), bodega_destino:bodega_destino_id(nombre), cliente:cliente_id(nombre)`)
+      .order('fecha', { ascending: false });
+    setTransacciones((transaccionesData || []).map(t => ({
+        id: t.id,
+        fecha: new Date(t.fecha).toLocaleString(),
+        tipo: t.tipo,
+        detalle: t.detalle,
+        items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
+        observaciones: t.observaciones,
+        notaSiigo: t.nota_siigo,
+        bodegaOrigenId: t.bodega_origen_id,
+        bodegaDestinoId: t.bodega_destino_id,
+      })));
+  };
+
+  const handleCreateInsumo = async (e) => {
+    e.preventDefault();
+    const sku = generarSKU(currentInsumo.proveedorId, currentInsumo.categoriaId, currentInsumo.insumoId);
+    const qtyIngreso = convertirAPrincipal(currentInsumo.stockCantidad || currentInsumo.stockInicial || 0, currentInsumo.stockUnidad || currentInsumo.unidadPrincipal, currentInsumo);
+    const bId = currentInsumo.bodegaInicial;
+
+    if (isEditing) {
+      // Update insumo master data
+      const { error } = await supabase
+        .from('insumos')
+        .update({
+          nombre: currentInsumo.nombre,
+          unidad_principal: currentInsumo.unidadPrincipal,
+          cantidad_principal: currentInsumo.cantidadPrincipal,
+          unidad_secundaria: currentInsumo.unidadSecundaria,
+          factor_conversion: currentInsumo.factorConversion,
+          stock_minimo: currentInsumo.stockMinimo,
+        })
+        .eq('sku', currentInsumo.sku);
+
+      if (error) {
+        showError(error, 'Error actualizando el insumo');
+        return;
+      }
+      setInsumos(prev => prev.map(ins => ins.sku === currentInsumo.sku ? { ...currentInsumo, sku } : ins));
+      await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: currentInsumo.fecha });
+      alert("Insumo actualizado correctamente");
+
+    } else { // Creating new or adding stock
+        const { data: insumoExistente, error: findError } = await supabase.from('insumos').select('sku').eq('sku', sku).maybeSingle();
+      
+        if (findError) {
+          alert("Error al verificar insumo: " + (findError.message || JSON.stringify(findError)));
+          return;
         }
 
-      } catch (error) {
-        setAlertInfo({ isOpen: true, title: 'Error Crítico', message: `Hubo un error inesperado al cargar: ${error.message}`, type: 'error' });
-      } finally {
-        setLoading(false);
-      }
-    };
-    
-    fetchData();
+      if (insumoExistente) { // Insumo exists, just add stock
+        const { data: stockActual, error: stockError } = await supabase
+          .from('stock')
+          .select('cantidad')
+          .eq('insumo_sku', sku)
+          .eq('bodega_id', bId)
+          .single();
+        
+        const nuevaCantidad = (stockActual ? stockActual.cantidad : 0) + qtyIngreso;
+        
+        const { error: updateError } = await supabase
+          .from('stock')
+          .upsert({ insumo_sku: sku, bodega_id: bId, cantidad: nuevaCantidad }, { onConflict: 'insumo_sku,bodega_id' });
+        
+        if(updateError) {
+          showError(updateError, 'Error actualizando stock');
+          return;
+        }
 
-    // --- PARTE 2: Cargar los scripts externos ---
-    const scripts = [
-      { id: 'xlsx', src: "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js" },
-      { id: 'jspdf', src: "https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js" },
-      { id: 'html2canvas', src: "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js" }
-    ];
+        setStockPorBodega(prev => ({
+            ...prev,
+            [sku]: { ...(prev[sku] || {}), [bId]: nuevaCantidad }
+        }));
+        await agregarTransaccion('INGRESO', { sku, detalle: `Ingreso de stock en ${BODEGAS.find(b => b.id == bId).nombre}`, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha });
+        alert("Stock incrementado correctamente para el código existente.");
 
-    scripts.forEach(scriptInfo => {
-      if (!document.getElementById(scriptInfo.id)) {
-        const script = document.createElement('script');
-        script.id = scriptInfo.id;
-        script.src = scriptInfo.src;
-        script.async = true;
-        document.body.appendChild(script);
+      } else { // New insumo, create it and add initial stock
+        // Ensure the referenced proveedor exists to avoid foreign-key violation 23503
+        const provId = currentInsumo.proveedorId;
+        if (provId) {
+          const { data: provData, error: provError } = await supabase.from('proveedores').select('id').eq('id', provId).maybeSingle();
+          if (provError) {
+            showError(provError, 'Error verificando proveedor');
+            return;
+          }
+          if (!provData) {
+            // Insert a minimal proveedor record so FK constraint is satisfied.
+            const { data: createdProv, error: createProvError } = await supabase.from('proveedores').insert({ id: provId, nombre: `Proveedor ${provId}` }).select().maybeSingle();
+            if (createProvError) {
+              showError(createProvError, 'Error creando proveedor automático');
+              return;
+            }
+            setProveedores(prev => [...prev, createdProv]);
+          }
+        }
+
+        // Use upsert to avoid race-condition duplicate-key (409) when two clients
+        // try to create the same SKU at the same time. Return the created record.
+        const { data: insertedInsumo, error: insumoError } = await supabase
+          .from('insumos')
+          .upsert({
+            sku: sku,
+            proveedor_id: currentInsumo.proveedorId,
+            categoria_id: currentInsumo.categoriaId,
+            insumo_id: currentInsumo.insumoId,
+            nombre: currentInsumo.nombre,
+            unidad_principal: currentInsumo.unidadPrincipal,
+            cantidad_principal: currentInsumo.cantidadPrincipal,
+            unidad_secundaria: currentInsumo.unidadSecundaria,
+            factor_conversion: currentInsumo.factorConversion,
+            stock_minimo: currentInsumo.stockMinimo,
+          }, { onConflict: 'sku' })
+          .select()
+          .maybeSingle();
+
+        if (insumoError) {
+          showError(insumoError, 'Error creando el nuevo insumo');
+          return;
+        }
+        
+        // Use upsert for stock as well to avoid unique-constraint conflicts
+        const { error: stockError } = await supabase
+          .from('stock')
+          .upsert({ insumo_sku: sku, bodega_id: bId, cantidad: qtyIngreso }, { onConflict: 'insumo_sku,bodega_id' });
+
+        if (stockError) {
+          showError(stockError, 'Error creando el stock inicial');
+          return;
+        }
+        
+        const nuevoInsumoDb = { ...currentInsumo, sku };
+        setInsumos([...insumos, nuevoInsumoDb]);
+        setStockPorBodega(prev => ({
+          ...prev,
+          [sku]: { ...(prev[sku] || {}), [bId]: qtyIngreso }
+        }));
+        const detalleCreacion = `Creación inicial en ${BODEGAS.find(b => b.id == bId).nombre}${currentInsumo.referencia ? ' | Ref: '+currentInsumo.referencia : ''}`;
+        await agregarTransaccion('CREACIÓN', { sku, detalle: detalleCreacion, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha });
+        alert("Nuevo insumo registrado con éxito.");
       }
+    }
+
+    setShowModal(false);
+    setIsEditing(false);
+    setCurrentInsumo({
+      proveedorId: '001', categoriaId: '0001', insumoId: '', nombre: '', referencia: '',
+      unidadPrincipal: '', cantidadPrincipal: 1, unidadSecundaria: '', factorConversion: 1,
+      stockInicial: 0, stockCantidad: 0, stockUnidad: '', stockMinimo: 0, bodegaInicial: selectedBodega ? selectedBodega.id : 1, fecha: new Date().toISOString().slice(0,10)
+    });
+  };
+
+  const openEditModal = (insumo) => {
+    setCurrentInsumo(insumo);
+    setIsEditing(true);
+    setShowModal(true);
+  };
+
+  // ...dentro del render del modal de insumo, cambia el input de insumoId:
+  // Busca el input de insumoId y reemplaza onChange por handleInsumoIdChange
+
+  const procesarMovimiento = (tipo) => {
+    if (formData.items.some(i => !i.sku || i.cantidad <= 0)) {
+      alert("Verifique que todos los items tengan código y cantidad mayor a 0");
+      return;
+    }
+
+    let itemsAProcesar = [];
+
+    for (const item of formData.items) {
+      const { sku, cantidad } = item;
+      const qtyRaw = parseFloat(cantidad) || 0;
+      const insumoData = insumos.find(i => i.sku === sku);
+      const unidadItem = item.unidad || (insumoData ? insumoData.unidadPrincipal : '');
+      const qty = convertirAPrincipal(qtyRaw, unidadItem, insumoData);
+      const bOriId = formData.bodegaOrigen.toString();
+      const stockActual = stockPorBodega[sku]?.[bOriId] || 0;
+      const stockMinimo = parseFloat(insumoData?.stockMinimo || 0);
+
+      if (stockActual < qty) {
+        alert(`Stock insuficiente para ${sku} en la bodega seleccionada (Disponible: ${stockActual})`);
+        return;
+      }
+
+      if (tipo === 'CONSUMO' && (stockActual - qty) < stockMinimo) {
+        const confirmacion = window.confirm(`ALERTA: El stock resultante (${stockActual - qty}) para ${sku} quedará por debajo del mínimo (${stockMinimo}). ¿Desea continuar?`);
+        if (!confirmacion) return;
+      }
+
+      itemsAProcesar.push({ sku, cantidad: qty });
+    }
+
+// INICIO CAMBIO
+    setStockPorBodega(prevStock => {
+      const nuevoStockGlobal = { ...prevStock };
+
+      itemsAProcesar.forEach(item => {
+        const { sku, cantidad } = item;
+        const bOriId = formData.bodegaOrigen.toString();
+        const bDestId = formData.bodegaDestino.toString();
+
+        const stockActualInsumo = nuevoStockGlobal[sku] || {};
+        const nuevoStockInsumo = { ...stockActualInsumo };
+
+        const stockOrigen = parseFloat(nuevoStockInsumo[bOriId] || 0);
+        const cantidadMovimiento = parseFloat(cantidad);
+
+        nuevoStockInsumo[bOriId] = stockOrigen - cantidadMovimiento;
+
+        if (tipo === 'TRASLADO') {
+          const stockDestino = parseFloat(nuevoStockInsumo[bDestId] || 0);
+          nuevoStockInsumo[bDestId] = stockDestino + cantidadMovimiento;
+        }
+
+        nuevoStockGlobal[sku] = nuevoStockInsumo;
+      });
+
+      return nuevoStockGlobal;
+    });
+// FIN CAMBIO
+
+    const clienteNombre = clientes.find(c => c.id === formData.clienteDestino)?.nombre || 'Desconocido';
+    const bodegaOrigenNombre = BODEGAS.find(b => b.id == formData.bodegaOrigen)?.nombre || 'Desconocida';
+    const bodegaDestinoNombre = BODEGAS.find(b => b.id == formData.bodegaDestino)?.nombre || 'Desconocida';
+
+    let detalleHistorial = "";
+    if (tipo === 'CONSUMO') {
+      detalleHistorial = `CONSUMO: ${clienteNombre} (Sede: ${bodegaOrigenNombre})`;
+    } else if (tipo === 'TRASLADO') {
+      detalleHistorial = `TRASLADO: ${bodegaOrigenNombre} -> ${bodegaDestinoNombre}`;
+    }
+
+// INICIO CAMBIO
+    agregarTransaccion(tipo, { 
+      detalle: detalleHistorial,
+      items: itemsAProcesar,
+      observaciones: formData.observaciones,
+      notaSiigo: '',
+      bodegaOrigenId: formData.bodegaOrigen,
+      bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
+      fecha: formData.fecha
     });
 
-  }, []); // El array vacío [] se asegura de que todo esto se ejecute una sola vez al cargar la app.
+    setFormData({ 
+      bodegaOrigen: selectedBodega.id, 
+      bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
+      clienteDestino: '001',
+      fecha: new Date().toISOString().slice(0,10),
+      items: [{ sku: '', cantidad: 0, unidad: '' }], 
+      observaciones: '',
+    });
+// FIN CAMBIO
 
-  const handleLogin = (user) => { setCurrentUser(user); };
-  const handleLogout = () => { setCurrentUser(null); setViewDate(new Date());};
-  
-  const handleEnviarSoporte = (movimientoId, file) => {
-    if (!file) { setAlertInfo({isOpen: true, title: "Archivo no seleccionado", message: "Por favor, seleccione un archivo para adjuntar como soporte.", type: 'error'}); return; }
-    const reader = new FileReader();
-    reader.readAsDataURL(file);
-    reader.onloadend = () => {
-        const fileUrl = reader.result;
-        setMovimientos(movs => movs.map(mov => mov.id === movimientoId ? { ...mov, soporteEnviado: true } : mov));
-        setSolicitudes(sols => sols.map(sol => sol.id_movimiento === movimientoId ? { ...sol, estado: 'enviado', url_foto: fileUrl, fileName: file.name, fileType: file.type } : sol));
-    };
+    alert("Movimiento procesado correctamente.");
   };
-  const handleSetFechaBloqueo = async (nuevaFecha) => {
-  console.log("1. Intentando guardar la fecha de bloqueo. Fecha recibida:", nuevaFecha);
 
-  const { error } = await supabase
-    .from('config')
-    .update({ fecha_bloqueo: nuevaFecha || null })
-    .eq('id', 1);
+  const exportToCSV = (filename, rows, headers) => {
+    const csv = [headers.join(','), ...rows.map(r => headers.map(h => {
+      const v = r[h] == null ? '' : String(r[h]).replace(/"/g,'""');
+      return `"${v}"`;
+    }).join(','))].join('\n');
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename; a.click(); URL.revokeObjectURL(url);
+  };
 
-  if (error) {
-    console.error("2. ¡ERROR de Supabase al intentar actualizar!", error);
-    setAlertInfo({ isOpen: true, title: 'Error al Guardar', message: `No se pudo guardar la fecha: ${error.message}`, type: 'error' });
-  } else {
-    console.log("3. ¡Éxito! La fecha se guardó en Supabase. Actualizando la vista.");
-    setFechaBloqueo(nuevaFecha || null);
-    setAlertInfo({ isOpen: true, title: 'Éxito', message: 'Fecha de bloqueo actualizada.', type: 'success' });
-  }
-};
-  const handleSolicitarSoporte = (movimientoId) => {
-    setMovimientos(movs => movs.map(mov => mov.id === movimientoId ? { ...mov, soporteRequerido: true } : mov));
-    const existeSolicitud = solicitudes.some(s => s.id_movimiento === movimientoId);
-    if (!existeSolicitud) {
-        const nuevaSolicitud = {id: Date.now(), id_movimiento: movimientoId, estado: 'pendiente', url_foto: null};
-        setSolicitudes(sols => [...sols, nuevaSolicitud]);
+  const convertirAPrincipal = (cantidad, unidad, insumo) => {
+    if (!insumo) return parseFloat(cantidad) || 0;
+    const val = parseFloat(cantidad) || 0;
+    const unit = (unidad || '').toString().toLowerCase();
+    const up = (insumo.unidadPrincipal || '').toString().toLowerCase();
+    const us = (insumo.unidadSecundaria || '').toString().toLowerCase();
+    if (unit === up) return val;
+    if (unit === us && insumo.factorConversion) return val / (parseFloat(insumo.factorConversion) || 1);
+    // conversiones comunes entre metros/centimetros
+    if ((unit === 'cm' || unit === 'centimetros') && (up === 'm' || up === 'metros')) return val / 100;
+    if ((unit === 'm' || unit === 'metros') && (up === 'cm' || up === 'centimetros')) return val * 100;
+    // gramos <-> kilos
+    if ((unit === 'g' || unit === 'gramos') && (up === 'kg' || up === 'kilogramos')) return val / 1000;
+    if ((unit === 'kg' || unit === 'kilogramos') && (up === 'g' || up === 'gramos')) return val * 1000;
+    return val;
+  };
+
+  const getReferenceForSku = (sku) => {
+    // Try local insumo first
+    const local = insumos.find(i => i.sku === sku);
+    if (local && local.referencia) return local.referencia;
+    // Otherwise check creation transactions for a 'Ref:' pattern
+    for (const t of transacciones) {
+      if ((t.tipo === 'CREACIÓN' || t.tipo === 'CREACION' || t.tipo === 'CREACIÓN') && t.items && t.items.some(it => it.sku === sku)) {
+        const m = (t.detalle || '').match(/Ref:\s*([^|]+)/i);
+        if (m && m[1]) return m[1].trim();
+      }
+    }
+    return '';
+  };
+
+  const computeUnitsForTransaction = (t) => {
+    let entrada = 0;
+    let salida = 0;
+    const actualSede = String(selectedBodega.id);
+    const origenId = t.bodegaOrigenId ? String(t.bodegaOrigenId) : null;
+    const destinoId = t.bodegaDestinoId ? String(t.bodegaDestinoId) : null;
+    const items = t.items || [];
+    for (const it of items) {
+      const qty = parseFloat(it.cantidad) || 0;
+      if (t.tipo === 'CONSUMO') {
+        if (origenId === actualSede) salida += qty;
+      } else if (t.tipo === 'TRASLADO') {
+        if (origenId === actualSede) salida += qty;
+        else if (destinoId === actualSede) entrada += qty;
+      } else if (t.tipo === 'CREACIÓN' || t.tipo === 'CREACION' || t.tipo === 'INGRESO') {
+        if (destinoId === actualSede || (t.sku && t.bodegaDestinoId == selectedBodega.id)) entrada += qty;
+      }
+    }
+    if (entrada > 0 && salida === 0) return `+${formatNumber(entrada)}`;
+    if (salida > 0 && entrada === 0) return `-${formatNumber(salida)}`;
+    if (entrada > 0 && salida > 0) return `+${formatNumber(entrada)} / -${formatNumber(salida)}`;
+    return '';
+  };
+
+  const exportHistoryCSV = () => {
+    const rows = transacciones.map(t => ({
+      Fecha: t.fecha,
+      Tipo: t.tipo,
+      Detalle: t.detalle,
+      Items: (t.items || []).map(it => `${formatNumber(it.cantidad)} x ${it.sku}`).join(' | '),
+      Nota: t.notaSiigo || '',
+      Observaciones: t.observaciones || ''
+    }));
+    exportToCSV('historial.csv', rows, ['Fecha','Tipo','Detalle','Items','Nota','Observaciones']);
+  };
+
+  const exportKardexCSV = () => {
+    if (showGeneralKardex) {
+      const rows = transacciones.flatMap(t => (t.items || []).map(it => ({
+        Fecha: t.fecha,
+        SKU: it.sku,
+        Nombre: (insumos.find(i => i.sku === it.sku)?.nombre) || '',
+        Tipo: t.tipo,
+        Origen: BODEGAS.find(b => b.id == t.bodegaOrigenId)?.nombre || '',
+        Destino: BODEGAS.find(b => b.id == t.bodegaDestinoId)?.nombre || '',
+        Cantidad: formatNumber(it.cantidad)
+      })));
+      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Cantidad']);
+    } else if (kardexSku) {
+      const rows = transacciones.filter(t => t.sku === kardexSku || (t.items && t.items.some(it => it.sku === kardexSku))).map(t => {
+        const it = (t.items || []).find(i => i.sku === kardexSku);
+        const cantidad = it ? formatNumber(it.cantidad) : formatNumber(t.cantidad || '');
+        return {
+          Fecha: t.fecha,
+          Tipo: t.tipo,
+          Detalle: t.detalle,
+          Cantidad: cantidad,
+          Observaciones: t.observaciones || ''
+        };
+      });
+      exportToCSV(`kardex_${kardexSku}.csv`, rows, ['Fecha','Tipo','Detalle','Cantidad','Observaciones']);
+    } else {
+      alert('Seleccione un SKU o active Kardex General para exportar');
     }
   };
 
-  const handleAnadirTercero = async (nuevoTercero) => {
-  // Le quitamos el ID temporal que genera Date.now(), 
-  // porque Supabase creará uno real y único.
-  const { id, ...datosDelTercero } = nuevoTercero;
+  const handleUpdateNotaSiigo = (id) => {
+    setTransacciones(prev => prev.map(t => t.id === id ? { ...t, notaSiigo: tempNotaValue } : t));
+    setEditingNotaId(null);
+  };
 
-  // 1. Usamos Supabase para insertar el nuevo registro
-  const { data, error } = await supabase
-    .from('terceros')          // Elige la tabla correcta
-    .insert(datosDelTercero)   // Inserta los datos sin el ID temporal
-    .select()                  // Pide que te devuelva el registro recién creado
-    .single();                 // Indica que solo esperas un resultado
-
-  // 2. Manejamos el resultado
-  if (error) {
-    console.error('Error al añadir tercero:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // 3. Si todo va bien, actualizamos el estado local con el dato real de la BD
-    setTerceros(prev => [...prev, data]);
-  }
-};
-  const handleEditarTercero = async (terceroActualizado) => {
-  // 1. Usamos Supabase para actualizar el registro
-  const { data, error } = await supabase
-    .from('terceros')                // Elige la tabla correcta
-    .update(terceroActualizado)      // Pasa el objeto con los nuevos datos
-    .eq('id', terceroActualizado.id) // Especifica CUÁL registro actualizar (el que tenga este ID)
-    .select()                        // Pide que te devuelva el registro actualizado
-    .single();
-
-  // 2. Manejamos el resultado
-  if (error) {
-    console.error('Error al editar tercero:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // 3. Si todo va bien, actualizamos el estado local
-    setTerceros(prev => prev.map(t => t.id === data.id ? data : t));
-  }
-};
-  
-  const handleAnadirMovimiento = async (mov) => {
-  const sedeMovs = movimientos.filter(m => m.id_sede === mov.id_sede);
-  const maxItem = sedeMovs.length > 0 ? Math.max(...sedeMovs.map(m => m.item_sede || 0)) : 0;
-
-  const { data, error } = await supabase
-    .from('movimientos')
-    .insert({ ...mov, item_sede: maxItem + 1 })
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error al añadir movimiento:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setMovimientos(prev => [...prev, data]);
-  }
-};
-  
-  const handleEditarMovimiento = async (movimientoActualizado) => {
-  // Separamos la propiedad 'type' que es solo para la UI
-  const { type, ...datosParaActualizar } = movimientoActualizado;
-
-  const { data, error } = await supabase
-    .from('movimientos')
-    .update(datosParaActualizar)
-    .eq('id', datosParaActualizar.id)
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error al editar movimiento:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // Volvemos a añadir la propiedad 'type' para que la UI se actualice
-    setMovimientos(prev => prev.map(m => m.id === data.id ? { ...data, type: 'gasto' } : m));
-  }
-};
-  const handleEliminarMovimiento = async (movimientoId) => {
-  const { error } = await supabase
-    .from('movimientos')
-    .delete()
-    .eq('id', movimientoId);
-
-  if (error) {
-    console.error('Error al eliminar movimiento:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setMovimientos(prev => prev.filter(m => m.id !== movimientoId));
-  }
-};
-const handleAnadirIngreso = async (ing) => {
-  // 1. Usamos Supabase para insertar el nuevo ingreso
-  const { data, error } = await supabase
-    .from('ingresos') // Elige la tabla correcta
-    .insert(ing)      // Inserta el nuevo ingreso
-    .select()         // Pide que te devuelva el registro creado
-    .single();
-
-  // 2. Manejamos el resultado
-  if (error) {
-    console.error('Error al añadir ingreso:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // 3. Si todo va bien, actualizamos el estado local
-    setIngresos(prev => [...prev, data]);
-  }
-};
-  
-  
-const handleEditarIngreso = async (ingresoActualizado) => {
-  // Solución: separamos la propiedad 'type' que es solo para la UI.
-  const { type, ...datosParaActualizar } = ingresoActualizado;
-
-  const { data, error } = await supabase
-    .from('ingresos')
-    .update(datosParaActualizar) // Solo enviamos los datos que existen en la tabla
-    .eq('id', datosParaActualizar.id)
-    .select()
-    .single();
-
-  if (error) {
-    console.error('Error al editar ingreso:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // Volvemos a añadir la propiedad 'type' para que la UI se actualice correctamente
-    setIngresos(prev => prev.map(i => i.id === data.id ? { ...data, type: 'ingreso' } : i));
-  }
-};
-  const handleEliminarIngreso = async (ingresoId) => {
-  const { error } = await supabase
-    .from('ingresos')      // Elige la tabla
-    .delete()              // Indica que quieres borrar
-    .eq('id', ingresoId);  // Especifica CUÁL registro borrar
-
-  if (error) {
-    console.error('Error al eliminar ingreso:', error);
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    // Si todo va bien, quita el ingreso del estado local para actualizar la UI
-    setIngresos(prev => prev.filter(i => i.id !== ingresoId));
-  }
-};
-  
-  const handleAnadirTipoGasto = async (nuevoTipo) => {
-  // Nota: el ID lo genera Supabase, así que no necesitamos Date.now()
-  const { data, error } = await supabase
-    .from('tipos_gasto')
-    .insert(nuevoTipo)
-    .select()
-    .single();
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setTiposGasto(prev => [...prev, data]);
-  }
-};
-  
-  const handleAnadirSede = (nuevaSede) => {
-      setSedes(prev => [...prev, { ...nuevaSede, id: Date.now(), password: null, blocked: false }]);
+  if (!selectedBodega) {
+    return (
+      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-6">
+        <div className="max-w-4xl w-full">
+          <div className="text-center mb-12">
+            <img src={logo} alt="Logo" className="w-48 mx-auto mb-4" />
+            <h1 className="text-4xl font-black text-white mb-2 tracking-tight">Sistema De Gestion De Insumos</h1>
+            <p className="text-slate-400 text-lg">Seleccione la sede de operación para continuar</p>
+          </div>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {BODEGAS.map((bodega) => (
+              <button
+                key={bodega.id}
+                onClick={() => setSelectedBodega(bodega)}
+                className={`group rounded-lg p-6 border transition ${bodega.principal ? 'bg-emerald-600 border-emerald-400 hover:scale-[1.02] shadow-xl shadow-emerald-900/20' : 'bg-slate-900 border-slate-800 hover:border-slate-700 hover:bg-slate-800/80'}`}
+              >
+                <div className="flex justify-between items-start mb-4">
+                  <div className={`p-3 rounded-2xl ${bodega.principal ? 'bg-white/20' : 'bg-slate-800'}`}>
+                    <MapPin className={bodega.principal ? 'text-white' : 'text-emerald-400'} />
+                  </div>
+                  {bodega.principal && (
+                    <span className="bg-white/20 text-white text-[10px] font-black px-3 py-1 rounded-full uppercase tracking-widest">Sede Principal</span>
+                  )}
+                </div>
+                <h3 className={`text-2xl font-bold mb-1 ${bodega.principal ? 'text-white' : 'text-slate-200'}`}>{bodega.nombre}</h3>
+                <p className={`text-sm ${bodega.principal ? 'text-emerald-100' : 'text-slate-500'}`}>Gestión de inventarios y logística</p>
+                <div className="mt-6 flex items-center gap-2 font-bold text-sm">
+                  <span className={bodega.principal ? 'text-white' : 'text-emerald-400'}>Ingresar al sistema</span>
+                  <ChevronRight size={16} className={`transition-transform group-hover:translate-x-1 ${bodega.principal ? 'text-white' : 'text-emerald-400'}`} />
+                </div>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
   }
 
-  const handleSeguridadSede = async (sedeId, action, value) => {
-  let updateData = {};
-  const sedeActual = sedes.find(s => s.id === sedeId);
+  const Navbar = () => (
+    <nav className="bg-slate-900 text-white p-4 flex justify-between items-center sticky top-0 z-50">
+      <div className="flex items-center gap-4">
+        <button 
+          onClick={() => setSelectedBodega(null)}
+          className="hover:bg-slate-800 p-2 rounded-lg text-slate-400 hover:text-white transition-colors"
+          title="Cambiar Sede"
+        >
+          <ArrowRightLeft size={20} />
+        </button>
+        <div className="h-6 w-px bg-slate-700 mx-2"></div>
+        <div className="flex items-center gap-2">
+          <Package className="text-emerald-400" />
+          <h1 className="text-xl font-bold tracking-tight">Sistema De Gestion De Insumos</h1>
+        </div>
+        <div className="ml-4 px-3 py-1 bg-emerald-500/10 border border-emerald-500/20 rounded-full">
+          <span className="text-[10px] font-black text-emerald-400 uppercase tracking-tighter">Sede: {selectedBodega.nombre}</span>
+        </div>
+      </div>
+      <div className="flex gap-4">
+        {[
+          { id: 'insumos', icon: Box, label: 'Insumos' },
+          { id: 'traslados', icon: ArrowRightLeft, label: 'Traslados' },
+          { id: 'consumos', icon: LogOut, label: 'Consumos' },
+          { id: 'kardex', icon: FileText, label: 'Kardex' },
+          { id: 'historial', icon: History, label: 'Historial' },
+          { id: 'maestro', icon: Settings, label: 'Maestro' },
+        ].map(item => (
+          <button 
+            key={item.id}
+            onClick={() => { console.log('cambiar-tab:', item.id); setActiveTab(item.id); }}
+            className={`flex items-center gap-2 px-3 py-1 rounded-md transition-all ${activeTab === item.id ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'}`}
+          >
+            <item.icon size={18} />
+            <span className="text-sm font-medium">{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
 
-  if (action === 'setPassword') {
-    updateData.password = value;
-  } else if (action === 'removePassword') {
-    updateData.password = null;
-  } else if (action === 'toggleBlock') {
-    updateData.blocked = !sedeActual.blocked;
+  class ErrorBoundary extends React.Component {
+    constructor(props){
+      super(props);
+      this.state = { error: null };
+    }
+    static getDerivedStateFromError(error) {
+      return { error };
+    }
+    componentDidCatch(error, info) {
+      console.error('ErrorBoundary caught:', error, info);
+    }
+    render() {
+      if (this.state.error) {
+        return (
+          <div className="p-8 max-w-4xl mx-auto">
+            <div className="bg-rose-50 border border-rose-200 text-rose-800 rounded-xl p-6">
+              <h3 className="font-bold mb-2">Se produjo un error al renderizar este módulo</h3>
+              <div className="text-sm whitespace-pre-wrap">{String(this.state.error && this.state.error.message ? this.state.error.message : this.state.error)}</div>
+              <details className="mt-2 text-xs text-slate-600">
+                <summary>Stack</summary>
+                <pre className="text-xs">{this.state.error && this.state.error.stack}</pre>
+              </details>
+            </div>
+          </div>
+        );
+      }
+      return this.props.children;
+    }
   }
 
-  const { data, error } = await supabase
-    .from('sedes')
-    .update(updateData)
-    .eq('id', sedeId)
-    .select()
-    .single();
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error de Seguridad', message: error.message, type: 'error'});
-  } else {
-    setSedes(prev => prev.map(s => s.id === sedeId ? data : s));
-  }
-};
-
-  const handleCargaMasivaCuentas = async (jsonData) => {
-  const nuevasCuentas = jsonData.map(item => ({
-    numero: item.Numero_Cuenta,
-    nombre: item.Nombre_Cuenta
-  }));
-
-  const { error } = await supabase.from('cuentas_contables').insert(nuevasCuentas);
-
-  if (error) {
-    setAlertInfo({ isOpen: true, title: 'Error de Carga Masiva', message: error.message, type: 'error' });
-  } else {
-    setAlertInfo({ isOpen: true, title: 'Éxito', message: 'Cuentas cargadas. Refrescando datos...', type: 'success' });
-    // Volvemos a cargar los datos para ver los cambios
-    const { data } = await supabase.from('cuentas_contables').select('*');
-    if (data) setCuentasContables(data);
-  }
-};
-
-  const handleCargaMasivaTerceros = async (jsonData) => {
-  const nuevosTerceros = jsonData.map(item => ({
-    id_sede_creacion: parseInt(item.ID_Sede),
-    nit_cc: item.NIT_CC,
-    nombre: item.Nombre,
-    direccion: item.Direccion || '',
-    telefono: item.Telefono || '',
-    correo: item.Correo || ''
-  }));
-
-  const { error } = await supabase.from('terceros').insert(nuevosTerceros);
-
-  if (error) {
-    setAlertInfo({ isOpen: true, title: 'Error de Carga Masiva', message: error.message, type: 'error' });
-  } else {
-    setAlertInfo({ isOpen: true, title: 'Éxito', message: 'Terceros cargados. Refrescando datos...', type: 'success' });
-    const { data } = await supabase.from('terceros').select('*');
-    if (data) setTerceros(data);
-  }
-};
-
-  const handleAnadirCuentaContable = async (nuevaCuenta) => {
-  const { data, error } = await supabase
-    .from('cuentas_contables')
-    .insert(nuevaCuenta)
-    .select()
-    .single();
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setCuentasContables(prev => [...prev, data]);
-  }
-};
-  
-  const handleEditarCuentaContable = async (cuentaActualizada) => {
-  const { data, error } = await supabase
-    .from('cuentas_contables')
-    .update(cuentaActualizada)
-    .eq('id', cuentaActualizada.id)
-    .select()
-    .single();
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setCuentasContables(prev => prev.map(c => c.id === data.id ? data : c));
-  }
-};
-const handleChangeAdminPassword = async (newPass) => {
-  const { error } = await supabase
-    .from('config')
-    .update({ admin_password: newPass })
-    .eq('id', 1); // Solo hay una fila de configuración
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setAdminPassword(newPass);
-    setAlertInfo({isOpen: true, title: 'Éxito', message: 'Contraseña de administrador actualizada.', type: 'success'});
-  }
-};
-  const handleEditarTipoGasto = async (tipoGastoActualizado) => {
-  const { data, error } = await supabase
-    .from('tipos_gasto')
-    .update(tipoGastoActualizado)
-    .eq('id', tipoGastoActualizado.id)
-    .select()
-    .single();
-
-  if (error) {
-    setAlertInfo({isOpen: true, title: 'Error', message: error.message, type: 'error'});
-  } else {
-    setTiposGasto(prev => prev.map(tg => tg.id === data.id ? data : tg));
-  }
-};
-
-if (loading) {
   return (
-    <div className="bg-gray-900 text-white min-h-screen flex justify-center items-center text-xl">
-      Cargando Datos...
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
+      <Navbar />
+      <ErrorBoundary>
+      <main className="p-6 max-w-7xl mx-auto">
+        <div className="mb-4 p-3 rounded-lg bg-slate-100 border text-sm text-slate-700">
+          <strong className="font-bold">DEBUG:</strong> activeTab = {activeTab} —
+          {` insumos:${String(activeTab==='insumos')} traslados:${String(activeTab==='traslados')} consumos:${String(activeTab==='consumos')} kardex:${String(activeTab==='kardex')} historial:${String(activeTab==='historial')} maestro:${String(activeTab==='maestro')}`}
+        </div>
+        {activeTab === 'insumos' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Inventario en {selectedBodega.nombre}</h2>
+              <button 
+                onClick={() => {
+                  setIsEditing(false);
+                  setCurrentInsumo({
+                    proveedorId: '001', categoriaId: '0001', insumoId: '', nombre: '', referencia: '',
+                    unidadPrincipal: '', cantidadPrincipal: 1, unidadSecundaria: '', factorConversion: 1,
+                    stockInicial: 0, stockCantidad: 0, stockUnidad: '', stockMinimo: 0, bodegaInicial: selectedBodega.id, fecha: new Date().toISOString().slice(0,10)
+                  });
+                  setShowModal(true);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white px-4 py-2 rounded-lg flex items-center gap-2 shadow-sm transition-colors"
+              >
+                <Plus size={20} /> Nuevo Insumo / Ingreso
+              </button>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-slate-100 border-b border-slate-200">
+                  <tr>
+                    <th className="p-4 font-semibold text-sm">Código (SKU)</th>
+                    <th className="p-4 font-semibold text-sm">Nombre Insumo</th>
+                    <th className="p-4 font-semibold text-sm">Stock Mínimo</th>
+                    <th className="p-4 font-semibold text-sm">Equivalencia</th>
+                    <th className="p-4 font-semibold text-sm text-center">Stock Real (Sede)</th>
+                    <th className="p-4 font-semibold text-sm">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {insumos.length === 0 ? (
+                    <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No hay insumos registrados.</td></tr>
+                  ) : insumos.map(insumo => {
+                    const stockEnSede = stockPorBodega[insumo.sku]?.[selectedBodega.id] || 0;
+                    const esCritico = stockEnSede <= parseFloat(insumo.stockMinimo);
+                    return (
+                      <tr key={insumo.sku} className={`hover:bg-slate-50 transition-colors ${esCritico ? 'bg-rose-50/50' : ''}`}>
+                        <td className="p-4 font-mono text-xs font-bold text-emerald-700">
+                          <div className="flex items-center gap-2">
+                            {insumo.sku}
+                            {esCritico && <AlertTriangle size={14} className="text-rose-500" title="Bajo Stock Mínimo" />}
+                          </div>
+                        </td>
+                        <td className="p-4 text-sm font-medium">{insumo.nombre}</td>
+                        <td className="p-4 text-sm font-bold text-slate-600">{formatNumber(insumo.stockMinimo)}</td>
+                        <td className="p-4 text-sm text-slate-500">
+                          {insumo.factorConversion} {insumo.unidadSecundaria}
+                        </td>
+                        <td className="p-4 text-center">
+                          <span className={`px-3 py-1 rounded-full text-xs font-black ${esCritico ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                            {formatNumber(stockEnSede)}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <button 
+                            onClick={() => openEditModal(insumo)}
+                            className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                            title="Editar Insumo"
+                          >
+                            <Edit2 size={18} />
+                          </button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {(activeTab === 'traslados' || activeTab === 'consumos') && (
+          <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
+            <div className={`p-6 text-white ${activeTab === 'traslados' ? 'bg-blue-600' : 'bg-rose-600'}`}>
+              <h2 className="text-2xl font-bold flex items-center gap-2">
+                {activeTab === 'traslados' ? <ArrowRightLeft /> : <LogOut />}
+                Nueva Orden de {activeTab.toUpperCase()}
+              </h2>
+            </div>
+            <div className="p-8 space-y-6">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold mb-2">Bodega Origen</label>
+                  <select 
+                    className="w-full p-3 bg-slate-50 border rounded-lg"
+                    value={formData.bodegaOrigen}
+                    onChange={e => setFormData({...formData, bodegaOrigen: e.target.value})}
+                  >
+                    {BODEGAS.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                  </select>
+                </div>
+                {activeTab === 'traslados' ? (
+                  <div>
+                    <label className="block text-sm font-bold mb-2">Bodega Destino</label>
+                    <select 
+                      className="w-full p-3 bg-slate-50 border rounded-lg"
+                      value={formData.bodegaDestino}
+                      onChange={e => setFormData({...formData, bodegaDestino: e.target.value})}
+                    >
+                      {BODEGAS.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
+                    </select>
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-bold mb-2">Cliente Destino</label>
+                    <select 
+                      className="w-full p-3 bg-slate-50 border rounded-lg border-rose-200 focus:border-rose-500"
+                      value={formData.clienteDestino}
+                      onChange={e => setFormData({...formData, clienteDestino: e.target.value})}
+                    >
+                      {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.id})</option>)}
+                    </select>
+                    <div className="mt-2">
+                      <label className="block text-sm font-bold mb-1">Fecha</label>
+                      <input type="date" className="w-full p-2 border rounded" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} />
+                    </div>
+                  </div>
+                )}
+              </div>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center">
+                  <label className="block text-sm font-bold">Items a procesar</label>
+                  <button 
+                    onClick={() => setFormData(f => ({...f, items: [...f.items, { sku: '', cantidad: '', unidad: '' }]}))}
+                    className="text-emerald-600 flex items-center gap-1 text-sm font-bold"
+                  >
+                    <Plus size={16} /> Añadir Item
+                  </button>
+                </div>
+                {formData.items.map((item, index) => {
+                  const insumoSel = insumos.find(i => i.sku === item.sku);
+                  const saldoSede = (item.sku && stockPorBodega[item.sku]) ? (stockPorBodega[item.sku][formData.bodegaOrigen] || 0) : 0;
+                  return (
+                    <div key={index} className="space-y-2 bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
+                      <div className="flex gap-2 items-end">
+                        <div className="flex-1">
+                          <label className="text-[10px] uppercase font-bold text-slate-400">Insumo (SKU)</label>
+                          <select 
+                            className="w-full p-2 bg-white border rounded"
+                            value={item.sku}
+                            onChange={e => {
+                              const newItems = [...formData.items];
+                              newItems[index].sku = e.target.value;
+                              const sel = insumos.find(i => i.sku === e.target.value);
+                              newItems[index].unidad = sel ? sel.unidadPrincipal : '';
+                              setFormData(f => ({...f, items: newItems}));
+                            }}
+                          >
+                            <option value="">Seleccione...</option>
+                            {insumos.map(i => (
+                              <option key={i.sku} value={i.sku}>{i.sku} - {i.nombre}</option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="w-28 px-2 py-1 bg-white border rounded flex flex-col justify-center items-center shadow-inner h-[42px]">
+                          <span className="text-[8px] uppercase font-black text-slate-400 leading-none mb-1 text-center">Saldo Actual</span>
+                          <div className="flex items-center gap-1">
+                            <Database size={10} className={saldoSede > 0 ? "text-emerald-500" : "text-slate-300"} />
+                            <span className={`text-xs font-black ${saldoSede > 0 ? "text-emerald-700" : "text-rose-600"}`}>
+                              {formatNumber(saldoSede)}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="w-24">
+                          <label className="text-[10px] uppercase font-bold text-slate-400">Cantidad</label>
+                          <input 
+                            type="text"
+                            inputMode="numeric"
+                            className="w-full p-2 bg-white border rounded"
+                            placeholder="0.00"
+                            defaultValue={item.cantidad == null ? '' : item.cantidad}
+                            onBlur={e => {
+                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                              setFormData(f => {
+                                const newItems = [...f.items];
+                                newItems[index] = { ...newItems[index], cantidad: val };
+                                return { ...f, items: newItems };
+                              });
+                            }}
+                          />
+                        </div>
+                        <div className="w-36">
+                          <label className="text-[10px] uppercase font-bold text-slate-400">Unidad</label>
+                          <select className="w-full p-2 bg-white border rounded" value={item.unidad || ''} onChange={e => {
+                            const newItems = [...formData.items];
+                            newItems[index].unidad = e.target.value;
+                            setFormData(f => ({...f, items: newItems}));
+                          }}>
+                            <option value="">Seleccione...</option>
+                            {insumoSel && <option value={insumoSel.unidadPrincipal}>{insumoSel.unidadPrincipal}</option>}
+                            {insumoSel && insumoSel.unidadSecundaria && <option value={insumoSel.unidadSecundaria}>{insumoSel.unidadSecundaria}</option>}
+                            <option value="unidad">unidad</option>
+                            <option value="kg">kg</option>
+                            <option value="g">g</option>
+                            <option value="m">m</option>
+                            <option value="cm">cm</option>
+                          </select>
+                        </div>
+                        <button 
+                          onClick={() => setFormData(f => ({...f, items: f.items.filter((_, i) => i !== index)}))}
+                          className="p-2 text-rose-500 hover:bg-rose-50 rounded"
+                        >
+                          <Trash2 size={20} />
+                        </button>
+                      </div>
+                      {insumoSel && (
+                        <div className="grid grid-cols-2 gap-4 pt-1 animate-in slide-in-from-top-1 duration-200">
+                          <div className="flex-1">
+                            <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Medida 1 (Unidad)</label>
+                            <div className="flex gap-1">
+                              <div className="w-12 p-1.5 bg-slate-200/50 border rounded text-xs text-slate-600 text-center font-bold">
+                                {insumoSel.cantidadPrincipal}
+                              </div>
+                              <div className="flex-1 p-1.5 bg-slate-200/50 border rounded text-xs text-slate-600 font-medium truncate">
+                                {insumoSel.unidadPrincipal}
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex-1">
+                            <label className="text-[10px] uppercase font-bold text-slate-400 block mb-1">Equivalencia / Factor</label>
+                            <div className="flex gap-1">
+                              <div className="w-16 p-1.5 bg-slate-200/50 border rounded text-xs text-slate-600 text-center font-bold">
+                                {insumoSel.factorConversion}
+                              </div>
+                              <div className="flex-1 p-1.5 bg-slate-200/50 border rounded text-xs text-slate-600 font-medium truncate">
+                                {insumoSel.unidadSecundaria}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-2">Observaciones</label>
+                <textarea 
+                  className="w-full p-3 bg-slate-50 border rounded-lg h-20"
+                  placeholder="Detalles adicionales..."
+                  value={formData.observaciones}
+                  onChange={e => setFormData({...formData, observaciones: e.target.value})}
+                />
+              </div>
+              <button
+                onClick={() => procesarMovimiento(activeTab === 'traslados' ? 'TRASLADO' : 'CONSUMO')}
+                className={`w-full mt-6 font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2 text-white ${activeTab === 'traslados' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+              >
+                <Check size={20} /> Procesar {activeTab.slice(0, -1).toUpperCase()}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'kardex' && (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold flex items-center gap-2"><FileText className="text-indigo-600" /> Kardex por Producto</h2>
+                <div className="flex gap-2 w-1/2">
+                <Search size={20} className="text-slate-400 mt-2" />
+                <select 
+                  className="w-full p-2 bg-white border rounded-lg shadow-sm font-bold text-slate-700"
+                  value={kardexSku}
+                  onChange={e => { setKardexSku(e.target.value); setShowGeneralKardex(false); }}
+                >
+                  <option value="">Seleccione un insumo para consultar...</option>
+                  {insumos.map(i => <option key={i.sku} value={i.sku}>{i.sku} | {i.nombre}</option>)}
+                </select>
+                <button
+                  onClick={() => { setShowGeneralKardex(v => { const nv = !v; if(nv) setKardexSku(''); return nv; }); }}
+                  className="ml-2 px-3 py-2 bg-slate-100 border rounded text-sm font-bold hover:bg-slate-200"
+                >{showGeneralKardex ? 'Ver por Producto' : 'Ver Kardex General'}</button>
+                <button onClick={exportKardexCSV} className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
+              </div>
+            </div>
+
+            {showGeneralKardex ? (
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {insumos.map(p => {
+                    const stockTotal = Object.values(stockPorBodega[p.sku] || {}).reduce((acc, val) => acc + (parseFloat(val) || 0), 0);
+                    const stockSedeActual = stockPorBodega[p.sku]?.[selectedBodega.id] || 0;
+                    const esCritico = stockSedeActual <= parseFloat(p.stockMinimo || 0);
+                    const referencia = getReferenceForSku(p.sku);
+                    return (
+                      <div key={p.sku} className={`bg-white rounded-xl border p-4 shadow-sm ${esCritico ? 'ring-rose-50' : ''}`}>
+                        <div className="flex justify-between items-start mb-2">
+                          <div>
+                            <div className="text-[10px] uppercase font-black text-slate-400">SKU</div>
+                            <div className="font-mono font-bold text-emerald-700">{p.sku}</div>
+                          </div>
+                          <div className="text-right">
+                            <div className="text-[10px] uppercase font-black text-slate-400">Stock Sede</div>
+                            <div className={`text-lg font-black ${esCritico ? 'text-rose-600' : 'text-emerald-700'}`}>{formatNumber(stockSedeActual)}</div>
+                          </div>
+                        </div>
+                        <div className="text-sm font-bold mb-1">{p.nombre}</div>
+                        {referencia && <div className="text-xs text-slate-500 mb-2">Ref: {referencia}</div>}
+                        <div className="flex gap-2 text-xs text-slate-600 mb-2">
+                          <div className="px-2 py-1 bg-slate-50 border rounded">Total: {formatNumber(stockTotal)}</div>
+                          <div className="px-2 py-1 bg-slate-50 border rounded">Mín: {formatNumber(p.stockMinimo)}</div>
+                          <div className="px-2 py-1 bg-slate-50 border rounded">{p.factorConversion} {p.unidadSecundaria}</div>
+                        </div>
+                        <div className="flex gap-2 mt-2">
+                          <button onClick={() => { setKardexSku(p.sku); setShowGeneralKardex(false); }} className="px-3 py-2 bg-emerald-600 text-white rounded text-sm">Ver Kardex</button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ) : kardexSku ? (
+              <div className="space-y-4 animate-in fade-in duration-300">
+                {(() => {
+                  const p = insumos.find(i => i.sku === kardexSku);
+                  if (!p) return null;
+                  const stockTotal = Object.values(stockPorBodega[p.sku] || {}).reduce((acc, val) => acc + (parseFloat(val) || 0), 0);
+                  const stockSedeActual = stockPorBodega[p.sku]?.[selectedBodega.id] || 0;
+                  return (
+                    <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                      <div className="bg-indigo-50 p-4 rounded-xl border border-indigo-100">
+                        <span className="text-[10px] uppercase font-black text-indigo-400 block">SKU Seleccionado</span>
+                        <span className="text-lg font-mono font-bold text-indigo-900">{p.sku}</span>
+                      </div>
+                      <div className="bg-white p-4 rounded-xl border shadow-sm md:col-span-1">
+                        <span className="text-[10px] uppercase font-black text-slate-400 block">Nombre</span>
+                        <span className="text-sm font-bold text-slate-800 line-clamp-2">{p.nombre}</span>
+                      </div>
+                      <div className="bg-emerald-50 p-4 rounded-xl border border-emerald-100">
+                        <span className="text-[10px] uppercase font-black text-emerald-400 block">Stock en {selectedBodega.nombre}</span>
+                        <span className="text-xl font-black text-emerald-700">{formatNumber(stockSedeActual)}</span>
+                      </div>
+                      <div className={`p-4 rounded-xl border shadow-sm ${stockTotal <= p.stockMinimo ? 'bg-rose-50 border-rose-100' : 'bg-slate-50 border-slate-200'}`}>
+                        <span className="text-[10px] uppercase font-black text-slate-400 block">Stock Total Global</span>
+                        <span className={`text-xl font-black ${stockTotal <= p.stockMinimo ? 'text-rose-600' : 'text-slate-700'}`}>{formatNumber(stockTotal)}</span>
+                        <span className="text-[10px] ml-2 text-slate-400 font-bold">(Mín: {formatNumber(p.stockMinimo)})</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                  <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b">
+                      <tr>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500">Fecha</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500">Tipo</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500">Detalle Operación</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500 text-center">Salida</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500 text-center">Entrada</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500">Nota Siigo</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {transacciones
+                        .filter(t => t.sku === kardexSku || (t.items && t.items.some(it => it.sku === kardexSku)))
+                        .map(t => {
+                          const itemEspecifico = t.items ? t.items.find(it => it.sku === kardexSku) : null;
+                          const cantidad = itemEspecifico ? itemEspecifico.cantidad : t.cantidad;
+                          
+                          let esSalida = false;
+                          let esEntrada = false;
+
+                          const actualSedeId = String(selectedBodega.id);
+                          const origenId = t.bodegaOrigenId ? String(t.bodegaOrigenId) : null;
+                          const destinoId = t.bodegaDestinoId ? String(t.bodegaDestinoId) : null;
+
+                          if (t.tipo === 'CONSUMO' && origenId === actualSedeId) {
+                            esSalida = true;
+                          } else if (t.tipo === 'TRASLADO') {
+                            if (origenId === actualSedeId) {
+                              esSalida = true;
+                            } else if (destinoId === actualSedeId) {
+                              esEntrada = true;
+                            }
+                          } else if ((t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO') && (destinoId === actualSedeId || (t.sku === kardexSku && t.bodegaDestinoId == selectedBodega.id))) {
+                            esEntrada = true;
+                          }
+
+                          return (
+                            <tr key={t.id} className="hover:bg-slate-50 transition-colors">
+                              <td className="p-4 text-sm font-mono text-slate-500">{t.fecha}</td>
+                              <td className="p-4">
+                                <span className={`px-2 py-1 rounded text-[10px] font-black ${
+                                  t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-emerald-100 text-emerald-700' : 
+                                  t.tipo === 'EDICIÓN' ? 'bg-indigo-100 text-indigo-700' :
+                                  t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                                }`}>
+                                  {t.tipo}
+                                </span>
+                              </td>
+                              <td className="p-4">
+                                <div className="text-sm font-bold text-slate-800">
+                                        {t.tipo}
+                                      </div>
+                                      <div className="text-[11px] text-slate-500 mt-0.5">{(() => {
+                                        if ((t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && t.items && t.items.length) {
+                                          return `${t.detalle || ''} — ${t.items.map(it => `${formatNumber(it.cantidad)} x ${insumos.find(i => i.sku === it.sku)?.nombre || it.sku}`).join(' | ')}`;
+                                        }
+                                        return t.detalle;
+                                      })()}</div>
+                                {t.observaciones && <div className="text-[10px] text-slate-400 italic mt-1">Obs: {t.observaciones}</div>}
+                              </td>
+                              <td className="p-4 text-center font-black">
+                                {esSalida && (
+                                  <span className="text-rose-600">-{formatNumber(cantidad)}</span>
+                                )}
+                              </td>
+                              <td className="p-4 text-center font-black">
+                                {esEntrada && (
+                                  <span className="text-emerald-600">+{formatNumber(cantidad)}</span>
+                                )}
+                              </td>
+                              <td className="p-4 text-sm font-bold text-slate-600">
+                                {t.tipo === 'TRASLADO' ? (
+                                  editingNotaId === t.id ? (
+                                    <div className="flex items-center gap-1">
+                                      <input 
+                                        className="p-1 border rounded text-xs w-24"
+                                        value={tempNotaValue}
+                                        onChange={e => setTempNotaValue(e.target.value)}
+                                        autoFocus
+                                      />
+                                      <button onClick={() => handleUpdateNotaSiigo(t.id)} className="text-emerald-600"><Check size={14} /></button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex items-center gap-2 group">
+                                      {t.notaSiigo || '-'}
+                                      <button 
+                                        onClick={() => { setEditingNotaId(t.id); setTempNotaValue(t.notaSiigo || ''); }}
+                                        className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 transition-all"
+                                      >
+                                        <Edit2 size={12} />
+                                      </button>
+                                    </div>
+                                  )
+                                ) : (
+                                  '-'
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center p-20 bg-white rounded-3xl border-2 border-dashed border-slate-200 text-slate-400">
+                <Search size={48} className="mb-4 opacity-20" />
+                <p className="text-lg font-medium">Seleccione un producto para ver su historial (Kardex)</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {activeTab === 'historial' && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center">
+              <h2 className="text-2xl font-bold">Historial de Transacciones</h2>
+              <button onClick={exportHistoryCSV} className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
+            </div>
+            <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
+              <table className="w-full text-left">
+                <thead className="bg-slate-100 border-b">
+                  <tr>
+                    <th className="p-4 text-sm font-bold">Fecha/Hora</th>
+                    <th className="p-4 text-sm font-bold">Tipo</th>
+                    <th className="p-4 text-sm font-bold">Detalle</th>
+                    <th className="p-4 text-sm font-bold">Unidades</th>
+                    <th className="p-4 text-sm font-bold">Referencia / SKU</th>
+                    <th className="p-4 text-sm font-bold">Nota de Traslado o Consumo Siigo</th>
+                    <th className="p-4 text-sm font-bold">Observaciones</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y text-sm">
+                  {transacciones.map(t => {
+                    const unidades = computeUnitsForTransaction(t);
+                    const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
+                    return (
+                      <tr key={t.id} className="hover:bg-slate-50">
+                        <td className="p-4 text-slate-500 font-mono">{t.fecha}</td>
+                        <td className="p-4">
+                          <span className={`px-2 py-1 rounded text-[10px] font-black ${
+                            t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-green-100 text-green-700' : 
+                            t.tipo === 'EDICIÓN' ? 'bg-indigo-100 text-indigo-700' :
+                            t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                          }`}>
+                            {t.tipo === 'CREACIÓN' ? 'INGRESO' : t.tipo}
+                          </span>
+                        </td>
+                        <td className="p-4">
+                          <div className="font-medium">{t.tipo === 'CREACIÓN' ? 'INGRESO' : t.tipo}</div>
+                          <div className="text-xs text-slate-500 mt-1">{(t.items && t.items.length) ? t.items.map(it => `${formatNumber(it.cantidad)} x ${it.sku}${insumos.find(i => i.sku === it.sku) ? ' - '+insumos.find(i => i.sku === it.sku).nombre : ''}`).join(' | ') : (t.detalle || '')}</div>
+                        </td>
+                        <td className="p-4 text-center font-black">{unidades || '-'}</td>
+                        <td className="p-4 text-sm text-slate-600">{referencia || '-'}</td>
+                        <td className="p-4 font-bold">
+                          {(t.tipo === 'TRASLADO' || t.tipo === 'CONSUMO') ? (
+                            editingNotaId === t.id ? (
+                              <div className="flex items-center gap-1">
+                                <input 
+                                  className="p-1 border rounded text-xs w-28"
+                                  value={tempNotaValue}
+                                  onChange={e => setTempNotaValue(e.target.value)}
+                                  autoFocus
+                                />
+                                <button onClick={() => handleUpdateNotaSiigo(t.id)} className="text-emerald-600 hover:scale-110"><Check size={16} /></button>
+                              </div>
+                            ) : (
+                              <div className="flex items-center gap-2 group">
+                                {t.notaSiigo || '-'}
+                                <button 
+                                  onClick={() => { setEditingNotaId(t.id); setTempNotaValue(t.notaSiigo || ''); }}
+                                  className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-indigo-600 transition-all"
+                                >
+                                  <Edit2 size={12} />
+                                </button>
+                              </div>
+                            )
+                          ) : (
+                            '-'
+                          )}
+                        </td>
+                        <td className="p-4 italic text-slate-500">{t.observaciones || '-'}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'maestro' && (
+          <div className="space-y-8">
+            <div className="bg-white p-6 rounded-xl shadow border">
+              <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-emerald-700">
+                <Settings size={18}/> Categorías de Insumos
+              </h3>
+              <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-2 max-h-[200px] overflow-y-auto p-2 bg-slate-50 rounded">
+                {categorias.map(cat => (
+                  <div key={cat.id} className="flex justify-between items-center bg-white p-2 rounded border shadow-sm">
+                    <span className="font-mono text-emerald-600 font-bold text-xs">{cat.id}</span>
+                    <span className="text-[11px] font-medium uppercase truncate ml-2">{cat.nombre}</span>
+                  </div>
+                ))}
+              </div>
+              <div className="mt-4 flex gap-2">
+                <input id="newCatId" placeholder="ID (4 Dígitos)" className="w-32 p-2 border rounded text-sm" maxLength={4} />
+                <input id="newCatName" placeholder="Nombre Categoría" className="flex-1 p-2 border rounded text-sm" />
+                <button 
+                  onClick={async () => {
+                    const id = document.getElementById('newCatId').value;
+                    const name = document.getElementById('newCatName').value;
+                    if (id.length === 4 && name) {
+                      const { data, error } = await supabase.from('categorias').insert({ id, nombre: name.toUpperCase() }).select();
+                      if (error) showError(error, 'Error creando categoría')
+                      else {
+                        setCategorias([...categorias, ...data]);
+                        document.getElementById('newCatId').value = '';
+                        document.getElementById('newCatName').value = '';
+                      }
+                    }
+                  }}
+                  className="bg-emerald-600 text-white p-2 rounded px-4 text-sm font-bold"
+                >Añadir</button>
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+              <div className="bg-white p-6 rounded-xl shadow border">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-blue-700">
+                  <Factory size={18}/> Maestro de Proveedores
+                </h3>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                  {proveedores.map(prov => (
+                    <div key={prov.id} className="flex justify-between items-center bg-slate-50 p-2 rounded border">
+                      <span className="font-mono text-blue-600 font-bold">{prov.id}</span>
+                      <span className="text-sm font-medium uppercase">{prov.nombre}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <input id="newProvId" placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
+                  <input id="newProvName" placeholder="Nombre Proveedor" className="flex-1 p-2 border rounded text-sm" />
+                  <button 
+                    onClick={async () => {
+                      const id = document.getElementById('newProvId').value;
+                      const name = document.getElementById('newProvName').value;
+                      console.log('CREATE PROVEEDOR:', { id, name });
+                      if (id.length === 3 && name) {
+                        try {
+                          const { data, error } = await supabase.from('proveedores').insert({ id, nombre: name.toUpperCase() }).select();
+                          console.log('SUPABASE RESPONSE:', { data, error });
+                          if (error) {
+                            console.error('ERROR OBJECT:', error);
+                            console.error('ERROR STATUS:', error.status);
+                            console.error('ERROR MESSAGE:', error.message);
+                            console.error('ERROR CODE:', error.code);
+                            showError(error, 'Error creando proveedor');
+                          } else {
+                            setProveedores([...proveedores, ...data]);
+                            document.getElementById('newProvId').value = '';
+                            document.getElementById('newProvName').value = '';
+                            alert('Proveedor creado correctamente');
+                          }
+                        } catch (e) {
+                          console.error('EXCEPTION:', e);
+                          showError(e, 'Excepción creando proveedor');
+                        }
+                      } else {
+                        alert('ID debe tener 3 dígitos');
+                      }
+                    }}
+                    className="bg-blue-600 text-white p-2 rounded px-4 text-sm font-bold"
+                  >Crear</button>
+                </div>
+              </div>
+              <div className="bg-white p-6 rounded-xl shadow border">
+                <h3 className="text-lg font-bold mb-4 flex items-center gap-2 text-indigo-700">
+                  <User size={18}/> Maestro de Clientes
+                </h3>
+                <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
+                  {clientes.map(cli => (
+                    <div key={cli.id} className="flex justify-between items-center bg-slate-50 p-2 rounded border">
+                      <span className="font-mono text-indigo-600 font-bold">{cli.id}</span>
+                      <span className="text-sm font-medium uppercase">{cli.nombre}</span>
+                    </div>
+                  ))}
+                </div>
+                <div className="mt-4 flex gap-2">
+                  <input id="newCliId" placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
+                  <input id="newCliName" placeholder="Nombre Cliente" className="flex-1 p-2 border rounded text-sm" />
+                  <button 
+                    onClick={async () => {
+                      const id = document.getElementById('newCliId').value;
+                      const name = document.getElementById('newCliName').value;
+                      console.log('CREATE CLIENTE:', { id, name });
+                      if(id.length === 3 && name) {
+                        try {
+                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase() }).select();
+                          console.log('SUPABASE RESPONSE:', { data, error });
+                          if(error) {
+                            console.error('ERROR OBJECT:', error);
+                            console.error('ERROR STATUS:', error.status);
+                            console.error('ERROR MESSAGE:', error.message);
+                            console.error('ERROR CODE:', error.code);
+                            showError(error, 'Error creando cliente');
+                          }
+                          else {
+                            setClientes([...clientes, ...data]);
+                            document.getElementById('newCliId').value = '';
+                            document.getElementById('newCliName').value = '';
+                            alert('Cliente creado correctamente');
+                          }
+                        } catch (e) {
+                          console.error('EXCEPTION:', e);
+                          showError(e, 'Excepción creando cliente');
+                        }
+                      } else {
+                        alert('ID debe tener 3 dígitos');
+                      }
+                    }}
+                    className="bg-indigo-600 text-white p-2 rounded px-4 text-sm font-bold"
+                  >Crear</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+      </main>
+      </ErrorBoundary>
+
+      {showModal && (
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden animate-in fade-in zoom-in duration-200">
+            <div className={`${isEditing ? 'bg-indigo-600' : 'bg-emerald-600'} p-6 text-white flex justify-between items-center`}>
+              <h3 className="text-xl font-bold">{isEditing ? 'Editar Registro de Insumo' : 'Configuración de Nuevo Insumo / Ingreso'}</h3>
+              <button onClick={() => setShowModal(false)} className="hover:bg-white/20 rounded-full p-1 transition-colors">
+                <Trash2 size={24} className="text-white" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateInsumo} className="p-8 grid grid-cols-2 gap-6">
+              <div className="col-span-2 bg-slate-50 p-4 rounded-lg border flex items-center justify-between">
+                <div>
+                  <label className="text-xs font-bold uppercase text-slate-400 block mb-1">SKU resultante</label>
+                  <p className="font-mono text-xl font-black text-slate-800">
+                    {generarSKU(currentInsumo.proveedorId, currentInsumo.categoriaId, currentInsumo.insumoId || '______')}
+                  </p>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] bg-slate-200 px-2 py-1 rounded font-bold uppercase">Proveedor - Cat - Item</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-1">Proveedor Propietario</label>
+                <select 
+                  className="w-full p-2 border rounded border-blue-200 focus:border-blue-500 disabled:bg-slate-100 disabled:text-slate-400"
+                  value={currentInsumo.proveedorId}
+                  disabled={isEditing}
+                  onChange={e => setCurrentInsumo({...currentInsumo, proveedorId: e.target.value})}
+                >
+                  {proveedores.map(p => <option key={p.id} value={p.id}>{p.id} - {p.nombre}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-bold mb-1">Categoría</label>
+                <select 
+                  className="w-full p-2 border rounded disabled:bg-slate-100 disabled:text-slate-400"
+                  value={currentInsumo.categoriaId}
+                  disabled={isEditing}
+                  onChange={e => setCurrentInsumo({...currentInsumo, categoriaId: e.target.value})}
+                >
+                  {categorias.map(c => <option key={c.id} value={c.id}>{c.id} - {c.nombre}</option>)}
+                </select>
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-bold mb-1">Código de Insumo (6 Dígitos)</label>
+                <input 
+                  type="text" maxLength={6} required
+                  className="w-full p-2 border rounded font-mono disabled:bg-slate-100 disabled:text-slate-400"
+                  placeholder="Ej: 000001"
+                  value={currentInsumo.insumoId}
+                  disabled={isEditing}
+                  onChange={e => handleInsumoIdChange(e.target.value.replace(/\D/g, ''))}
+                />
+              </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-bold mb-1">Nombre Descriptivo</label>
+                <input 
+                  type="text" required
+                  className="w-full p-2 border rounded"
+                  placeholder="Ej: Rollo Vinipel Transparente 500m"
+                  value={currentInsumo.nombre}
+                  onChange={e => setCurrentInsumo({...currentInsumo, nombre: e.target.value})}
+                />
+              </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1">Referencia (opcional)</label>
+                <input 
+                  type="text"
+                  className="w-full p-2 border rounded"
+                  placeholder="Ref interna / codigo proveedor"
+                  value={currentInsumo.referencia}
+                  onChange={e => setCurrentInsumo({...currentInsumo, referencia: e.target.value})}
+                />
+              </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1">Fecha</label>
+                <input type="date" className="w-full p-2 border rounded" value={currentInsumo.fecha} onChange={e => setCurrentInsumo({...currentInsumo, fecha: e.target.value})} />
+              </div>
+              <div className="border-t border-slate-100 col-span-2 pt-4 flex gap-4">
+                <div className="flex-1">
+                  <label className="block text-sm font-bold mb-1">Medida 1 (Unidad)</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number" placeholder="1" className="w-16 p-2 border rounded" 
+                      value={currentInsumo.cantidadPrincipal}
+                      onChange={e => setCurrentInsumo({...currentInsumo, cantidadPrincipal: e.target.value})} 
+                    />
+                    <input 
+                      type="text" placeholder="Rollo" className="flex-1 p-2 border rounded" 
+                      value={currentInsumo.unidadPrincipal}
+                      onChange={e => setCurrentInsumo({...currentInsumo, unidadPrincipal: e.target.value})} 
+                    />
+                  </div>
+                </div>
+                <div className="flex items-end pb-2 text-slate-400 font-bold">=</div>
+                <div className="flex-1">
+                  <label className="block text-sm font-bold mb-1">Equivalencia / Factor</label>
+                  <div className="flex gap-2">
+                    <input 
+                      type="number" placeholder="100" className="w-20 p-2 border rounded" 
+                      value={currentInsumo.factorConversion}
+                      onChange={e => setCurrentInsumo({...currentInsumo, factorConversion: e.target.value})} 
+                    />
+                    <input 
+                      type="text" placeholder="Centímetros" className="flex-1 p-2 border rounded" 
+                      value={currentInsumo.unidadSecundaria}
+                      onChange={e => setCurrentInsumo({...currentInsumo, unidadSecundaria: e.target.value})} 
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1 underline decoration-rose-500">Stock Mínimo Alerta</label>
+                <input 
+                  type="number" className="w-full p-2 border rounded border-rose-200"
+                  value={currentInsumo.stockMinimo}
+                  onChange={e => setCurrentInsumo({...currentInsumo, stockMinimo: e.target.value})}
+                />
+              </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1">Cantidad a Ingresar</label>
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    className="w-1/2 p-2 border rounded border-emerald-300 focus:border-emerald-500"
+                    placeholder="0.00"
+                    value={currentInsumo.stockCantidad || ''}
+                    onChange={e => setCurrentInsumo({...currentInsumo, stockCantidad: e.target.value.replace(/[^0-9.]/g,'')})}
+                  />
+                  <select className="w-1/2 p-2 border rounded" value={currentInsumo.stockUnidad || ''} onChange={e => setCurrentInsumo({...currentInsumo, stockUnidad: e.target.value})}>
+                    <option value="">Seleccione unidad...</option>
+                    {currentInsumo.unidadPrincipal && <option value={currentInsumo.unidadPrincipal}>{currentInsumo.unidadPrincipal}</option>}
+                    {currentInsumo.unidadSecundaria && <option value={currentInsumo.unidadSecundaria}>{currentInsumo.unidadSecundaria}</option>}
+                    <option value="unidad">unidad</option>
+                    <option value="kg">kg</option>
+                    <option value="g">g</option>
+                    <option value="m">m</option>
+                    <option value="cm">cm</option>
+                  </select>
+                </div>
+              </div>
+              <div className="col-span-2 pt-4">
+                <button 
+                  type="submit"
+                  className={`w-full ${isEditing ? 'bg-indigo-600 hover:bg-indigo-700' : 'bg-emerald-600 hover:bg-emerald-700'} text-white font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2`}
+                >
+                  <Save size={20} /> {isEditing ? 'Actualizar Información' : 'Procesar Ingreso'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
-}
-  if (!currentUser) {
-    return <LoginScreen onLogin={handleLogin} sedes={sedes} adminPassword={adminPassword} />;
-  }
+};
 
-  if (currentUser.id_usuario === 'ADMIN') {
-      return <AdminDashboard currentUser={currentUser} onLogout={handleLogout} movimientos={movimientos} ingresos={ingresos} solicitudes={solicitudes} handleSolicitarSoporte={handleSolicitarSoporte} viewDate={viewDate} setViewDate={setViewDate} terceros={terceros} tiposGasto={tiposGasto} cuentasContables={cuentasContables} handleAnadirTipoGasto={handleAnadirTipoGasto} sedes={sedes} handleSeguridadSede={handleSeguridadSede} adminPassword={adminPassword} handleChangeAdminPassword={handleChangeAdminPassword} handleAnadirSede={handleAnadirSede} handleCargaMasivaCuentas={handleCargaMasivaCuentas} handleCargaMasivaTerceros={handleCargaMasivaTerceros} setAlertInfo={setAlertInfo} handleEditarCuentaContable={handleEditarCuentaContable} handleEditarTipoGasto={handleEditarTipoGasto} fechaBloqueo={fechaBloqueo} handleSetFechaBloqueo={handleSetFechaBloqueo} handleAnadirCuentaContable={handleAnadirCuentaContable} />
-  }
-
-  return <SedeDashboard currentUser={currentUser} onLogout={handleLogout} movimientos={movimientos} ingresos={ingresos} solicitudes={solicitudes} handleEnviarSoporte={handleEnviarSoporte} viewDate={viewDate} setViewDate={setViewDate} terceros={terceros} handleAnadirTercero={handleAnadirTercero} handleEditarTercero={handleEditarTercero} handleAnadirMovimiento={handleAnadirMovimiento} handleAnadirIngreso={handleAnadirIngreso} tiposGasto={tiposGasto} cuentasContables={cuentasContables} sedes={sedes} handleEditarMovimiento={handleEditarMovimiento} handleEditarIngreso={handleEditarIngreso} fechaBloqueo={fechaBloqueo} handleEliminarMovimiento={handleEliminarMovimiento} handleEliminarIngreso={handleEliminarIngreso} setAlertInfo={setAlertInfo} />;
-}
+export default App;
