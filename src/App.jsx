@@ -237,7 +237,6 @@ const App = () => {
         });
         setStockPorBodega(stockMap);
       }
-      
 
       // Fetch Categorias, Proveedores, Clientes (con fallback local si la tabla no existe)
       const { data: categoriasData, error: categoriasError } = await supabase.from('categorias').select('*');
@@ -264,7 +263,6 @@ const App = () => {
         setClientes(clientesData || []);
       }
 
-      
       // Fetch Transacciones
       const { data: transaccionesData, error: transaccionesError } = await supabase
         .from('transacciones')
@@ -285,9 +283,11 @@ const App = () => {
           bodegaDestinoId: t.bodega_destino_id,
         })));
       }
-      
     };
     fetchData();
+    // Autorefresh cada 10 segundos
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -313,20 +313,28 @@ const App = () => {
     // Asegura que el id del cliente se guarde correctamente en CONSUMO y exista en la tabla clientes
     let clienteId = null;
     if (tipo === 'CONSUMO') {
-      if (data.clienteDestino && typeof data.clienteDestino === 'string' && data.clienteDestino.trim() !== '') {
-        clienteId = data.clienteDestino;
-      } else if (formData && formData.clienteDestino && typeof formData.clienteDestino === 'string' && formData.clienteDestino.trim() !== '') {
-        clienteId = formData.clienteDestino;
+      // Forzar clienteDestino como string y comparar como string, sin padStart
+      if (data.clienteDestino && String(data.clienteDestino).trim() !== '') {
+        clienteId = String(data.clienteDestino).trim();
+      } else if (formData && formData.clienteDestino && String(formData.clienteDestino).trim() !== '') {
+        clienteId = String(formData.clienteDestino).trim();
       } else {
         clienteId = null;
       }
-      // Validar que el cliente exista en la lista de clientes
-      if (clienteId && !clientes.some(c => c.id === clienteId)) {
+      // Validar que el cliente exista en la lista de clientes (aceptando coincidencia por string o número)
+      if (
+        clienteId &&
+        !clientes.some(c =>
+          String(c.id) === clienteId ||
+          String(clienteId) === String(c.id) ||
+          Number(c.id) === Number(clienteId)
+        )
+      ) {
         showError('El cliente seleccionado no existe en la base de datos. Por favor, verifique o cree el cliente en el maestro.', 'Cliente no válido');
-        return;
+        return false;
       }
-    } else if (data.clienteDestino && typeof data.clienteDestino === 'string' && data.clienteDestino.trim() !== '') {
-      clienteId = data.clienteDestino;
+    } else if (data.clienteDestino && String(data.clienteDestino).trim() !== '') {
+      clienteId = String(data.clienteDestino).trim();
     }
     if (clienteId === '') clienteId = null;
     const insertObj = {
@@ -339,15 +347,20 @@ const App = () => {
       fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
     };
     if (clienteId) insertObj.cliente_id = clienteId;
+    // Forzar tipo de cliente_id: si es numérico en la base, convertir a number
+    if (clienteId && !isNaN(clienteId)) {
+      insertObj.cliente_id = Number(clienteId);
+    }
     const { data: transaccion, error } = await supabase
       .from('transacciones')
       .insert(insertObj)
       .select().single();
 
     if (error) {
+      let msg = (error.message || '') + '\n' + (error.details || '') + '\n' + (error.hint || '') + '\n' + JSON.stringify(error);
+      alert("Error al crear la transacción: " + msg);
       console.error("Error creating transaction: ", error);
-      alert("Error al crear la transacción.");
-      return;
+      return false;
     }
 
     if(data.items && data.items.length > 0) {
@@ -357,7 +370,12 @@ const App = () => {
         cantidad: item.cantidad
       }));
       const { error: itemsError } = await supabase.from('transaccion_items').insert(itemsToInsert);
-      if (itemsError) console.error("Error creating transaction items: ", itemsError);
+      if (itemsError) {
+        let msg = itemsError.message || itemsError.details || JSON.stringify(itemsError);
+        alert("Error al crear los items de la transacción: " + msg);
+        console.error("Error creating transaction items: ", itemsError);
+        return false;
+      }
     }
     // Refresh transactions from DB
     const { data: transaccionesData } = await supabase
@@ -376,6 +394,7 @@ const App = () => {
         bodegaDestinoId: t.bodega_destino_id,
         clienteNombre: t.cliente ? t.cliente.nombre : '',
       })));
+    return true;
   };
 
   const handleCreateInsumo = async (e) => {
@@ -555,35 +574,7 @@ const App = () => {
       itemsAProcesar.push({ sku, cantidad: qty });
     }
 
-// INICIO CAMBIO
-    setStockPorBodega(prevStock => {
-      const nuevoStockGlobal = { ...prevStock };
-
-      itemsAProcesar.forEach(item => {
-        const { sku, cantidad } = item;
-        const bOriId = formData.bodegaOrigen.toString();
-        const bDestId = formData.bodegaDestino.toString();
-
-        const stockActualInsumo = nuevoStockGlobal[sku] || {};
-        const nuevoStockInsumo = { ...stockActualInsumo };
-
-        const stockOrigen = parseFloat(nuevoStockInsumo[bOriId] || 0);
-        const cantidadMovimiento = parseFloat(cantidad);
-
-        nuevoStockInsumo[bOriId] = stockOrigen - cantidadMovimiento;
-
-        if (tipo === 'TRASLADO') {
-          const stockDestino = parseFloat(nuevoStockInsumo[bDestId] || 0);
-          nuevoStockInsumo[bDestId] = stockDestino + cantidadMovimiento;
-        }
-
-        nuevoStockGlobal[sku] = nuevoStockInsumo;
-      });
-
-      return nuevoStockGlobal;
-    });
-// FIN CAMBIO
-
+    // Calcular detalleHistorial antes de usarlo
     const clienteNombre = clientes.find(c => c.id === formData.clienteDestino)?.nombre || 'Desconocido';
     const bodegaOrigenNombre = BODEGAS.find(b => b.id == formData.bodegaOrigen)?.nombre || 'Desconocida';
     const bodegaDestinoNombre = BODEGAS.find(b => b.id == formData.bodegaDestino)?.nombre || 'Desconocida';
@@ -594,6 +585,49 @@ const App = () => {
     } else if (tipo === 'TRASLADO') {
       detalleHistorial = `TRASLADO: ${bodegaOrigenNombre} -> ${bodegaDestinoNombre}`;
     }
+
+    // Solo descontar stock si la transacción fue exitosa
+    agregarTransaccion(tipo, { 
+      detalle: detalleHistorial,
+      items: itemsAProcesar,
+      observaciones: formData.observaciones,
+      notaSiigo: '',
+      bodegaOrigenId: formData.bodegaOrigen,
+      bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
+      fecha: formData.fecha.slice(0,10),
+      clienteDestino: formData.clienteDestino
+    }).then(success => {
+      if (success) {
+        setStockPorBodega(prevStock => {
+          const nuevoStockGlobal = { ...prevStock };
+          itemsAProcesar.forEach(item => {
+            const { sku, cantidad } = item;
+            const bOriId = formData.bodegaOrigen.toString();
+            const bDestId = formData.bodegaDestino.toString();
+            const stockActualInsumo = nuevoStockGlobal[sku] || {};
+            const nuevoStockInsumo = { ...stockActualInsumo };
+            const stockOrigen = parseFloat(nuevoStockInsumo[bOriId] || 0);
+            const cantidadMovimiento = parseFloat(cantidad);
+            nuevoStockInsumo[bOriId] = stockOrigen - cantidadMovimiento;
+            if (tipo === 'TRASLADO') {
+              const stockDestino = parseFloat(nuevoStockInsumo[bDestId] || 0);
+              nuevoStockInsumo[bDestId] = stockDestino + cantidadMovimiento;
+            }
+            nuevoStockGlobal[sku] = nuevoStockInsumo;
+          });
+          return nuevoStockGlobal;
+        });
+        setFormData({ 
+          bodegaOrigen: selectedBodega.id, 
+          bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
+          clienteDestino: '001',
+          fecha: new Date().toISOString().slice(0,10),
+          items: [{ sku: '', cantidad: 0, unidad: '' }], 
+          observaciones: '',
+        });
+        alert("Movimiento procesado correctamente.");
+      }
+    });
 
 // INICIO CAMBIO
     agregarTransaccion(tipo, { 
