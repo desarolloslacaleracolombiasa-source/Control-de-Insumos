@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import CargaMasivaConsumos from './CargaMasivaConsumos';
 import logo from '../LOGO CAALERA.png';
 import { 
   Package, 
@@ -1113,12 +1112,6 @@ const App = () => {
               >
                 <Check size={20} /> Procesar {activeTab.slice(0, -1).toUpperCase()}
               </button>
-              {/* Carga Masiva Consumos: solo mostrar en consumos */}
-              {activeTab === 'consumos' && (
-                <div className="mt-8">
-                  <CargaMasivaConsumos onSuccess={() => window.location.reload()} />
-                </div>
-              )}
             </div>
           </div>
         )}
