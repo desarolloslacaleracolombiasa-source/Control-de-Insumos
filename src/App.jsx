@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import CargaMasivaConsumos from './CargaMasivaConsumos';
 import logo from '../LOGO CAALERA.png';
 import { 
   Package, 
@@ -310,18 +311,39 @@ const App = () => {
   }, []);
 
   const agregarTransaccion = async (tipo, data) => {
+    // Asegura que el id del cliente se guarde correctamente en CONSUMO y exista en la tabla clientes
+    let clienteId = null;
+    if (tipo === 'CONSUMO') {
+      if (data.clienteDestino && typeof data.clienteDestino === 'string' && data.clienteDestino.trim() !== '') {
+        clienteId = data.clienteDestino;
+      } else if (formData && formData.clienteDestino && typeof formData.clienteDestino === 'string' && formData.clienteDestino.trim() !== '') {
+        clienteId = formData.clienteDestino;
+      } else {
+        clienteId = null;
+      }
+      // Validar que el cliente exista en la lista de clientes
+      if (clienteId && !clientes.some(c => c.id === clienteId)) {
+        showError('El cliente seleccionado no existe en la base de datos. Por favor, verifique o cree el cliente en el maestro.', 'Cliente no válido');
+        return;
+      }
+    } else if (data.clienteDestino && typeof data.clienteDestino === 'string' && data.clienteDestino.trim() !== '') {
+      clienteId = data.clienteDestino;
+    }
+    if (clienteId === '') clienteId = null;
+    const insertObj = {
+      tipo: tipo,
+      detalle: data.detalle,
+      observaciones: data.observaciones,
+      nota_siigo: data.notaSiigo,
+      bodega_origen_id: data.bodegaOrigenId,
+      bodega_destino_id: data.bodegaDestinoId,
+      fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
+    };
+    if (clienteId) insertObj.cliente_id = clienteId;
     const { data: transaccion, error } = await supabase
       .from('transacciones')
-      .insert({
-        tipo: tipo,
-        detalle: data.detalle,
-        observaciones: data.observaciones,
-        nota_siigo: data.notaSiigo,
-        bodega_origen_id: data.bodegaOrigenId,
-        bodega_destino_id: data.bodegaDestinoId,
-        cliente_id: data.clienteDestino,
-        fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
-      }).select().single();
+      .insert(insertObj)
+      .select().single();
 
     if (error) {
       console.error("Error creating transaction: ", error);
@@ -338,7 +360,6 @@ const App = () => {
       const { error: itemsError } = await supabase.from('transaccion_items').insert(itemsToInsert);
       if (itemsError) console.error("Error creating transaction items: ", itemsError);
     }
-    
     // Refresh transactions from DB
     const { data: transaccionesData } = await supabase
       .from('transacciones')
@@ -346,7 +367,7 @@ const App = () => {
       .order('fecha', { ascending: false });
     setTransacciones((transaccionesData || []).map(t => ({
         id: t.id,
-        fecha: new Date(t.fecha).toLocaleString(),
+        fecha: new Date(t.fecha).toISOString().slice(0,10),
         tipo: t.tipo,
         detalle: t.detalle,
         items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -354,6 +375,7 @@ const App = () => {
         notaSiigo: t.nota_siigo,
         bodegaOrigenId: t.bodega_origen_id,
         bodegaDestinoId: t.bodega_destino_id,
+        clienteNombre: t.cliente ? t.cliente.nombre : '',
       })));
   };
 
@@ -382,7 +404,7 @@ const App = () => {
         return;
       }
       setInsumos(prev => prev.map(ins => ins.sku === currentInsumo.sku ? { ...currentInsumo, sku } : ins));
-      await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: currentInsumo.fecha });
+      await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: currentInsumo.fecha.slice(0,10) });
       alert("Insumo actualizado correctamente");
 
     } else { // Creating new or adding stock
@@ -416,7 +438,7 @@ const App = () => {
             ...prev,
             [sku]: { ...(prev[sku] || {}), [bId]: nuevaCantidad }
         }));
-        await agregarTransaccion('INGRESO', { sku, detalle: `Ingreso de stock en ${BODEGAS.find(b => b.id == bId).nombre}`, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha });
+        await agregarTransaccion('INGRESO', { sku, detalle: `Ingreso de stock en ${BODEGAS.find(b => b.id == bId).nombre}`, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
         alert("Stock incrementado correctamente para el código existente.");
 
       } else { // New insumo, create it and add initial stock
@@ -480,7 +502,7 @@ const App = () => {
           [sku]: { ...(prev[sku] || {}), [bId]: qtyIngreso }
         }));
         const detalleCreacion = `Creación inicial en ${BODEGAS.find(b => b.id == bId).nombre}${currentInsumo.referencia ? ' | Ref: '+currentInsumo.referencia : ''}`;
-        await agregarTransaccion('CREACIÓN', { sku, detalle: detalleCreacion, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha });
+        await agregarTransaccion('CREACIÓN', { sku, detalle: detalleCreacion, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
         alert("Nuevo insumo registrado con éxito.");
       }
     }
@@ -582,7 +604,7 @@ const App = () => {
       notaSiigo: '',
       bodegaOrigenId: formData.bodegaOrigen,
       bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
-      fecha: formData.fecha
+      fecha: formData.fecha.slice(0,10)
     });
 
     setFormData({ 
@@ -677,30 +699,40 @@ const App = () => {
   };
 
   const exportKardexCSV = () => {
+    // Helper para formatear fecha solo como DD/MM/YYYY
+    const formatFecha = (f) => {
+      if (!f) return '';
+      let s = typeof f === 'string' ? f.slice(0,10) : '';
+      if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.split('-').reverse().join('/');
+      if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
+      return s;
+    };
     if (showGeneralKardex) {
       const rows = transacciones.flatMap(t => (t.items || []).map(it => ({
-        Fecha: t.fecha,
+        Fecha: formatFecha(t.fecha),
         SKU: it.sku,
         Nombre: (insumos.find(i => i.sku === it.sku)?.nombre) || '',
         Tipo: t.tipo,
         Origen: BODEGAS.find(b => b.id == t.bodegaOrigenId)?.nombre || '',
         Destino: BODEGAS.find(b => b.id == t.bodegaDestinoId)?.nombre || '',
+        Cliente: t.clienteNombre || '',
         Cantidad: formatNumber(it.cantidad)
       })));
-      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Cantidad']);
+      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Cliente','Cantidad']);
     } else if (kardexSku) {
       const rows = transacciones.filter(t => t.sku === kardexSku || (t.items && t.items.some(it => it.sku === kardexSku))).map(t => {
         const it = (t.items || []).find(i => i.sku === kardexSku);
         const cantidad = it ? formatNumber(it.cantidad) : formatNumber(t.cantidad || '');
         return {
-          Fecha: t.fecha,
+          Fecha: formatFecha(t.fecha),
           Tipo: t.tipo,
           Detalle: t.detalle,
+          Cliente: t.clienteNombre || '',
           Cantidad: cantidad,
           Observaciones: t.observaciones || ''
         };
       });
-      exportToCSV(`kardex_${kardexSku}.csv`, rows, ['Fecha','Tipo','Detalle','Cantidad','Observaciones']);
+      exportToCSV(`kardex_${kardexSku}.csv`, rows, ['Fecha','Tipo','Detalle','Cliente','Cantidad','Observaciones']);
     } else {
       alert('Seleccione un SKU o active Kardex General para exportar');
     }
@@ -1081,6 +1113,12 @@ const App = () => {
               >
                 <Check size={20} /> Procesar {activeTab.slice(0, -1).toUpperCase()}
               </button>
+              {/* Carga Masiva Consumos: solo mostrar en consumos */}
+              {activeTab === 'consumos' && (
+                <div className="mt-8">
+                  <CargaMasivaConsumos onSuccess={() => window.location.reload()} />
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1179,6 +1217,7 @@ const App = () => {
                         <th className="p-4 text-xs font-bold uppercase text-slate-500">Fecha</th>
                         <th className="p-4 text-xs font-bold uppercase text-slate-500">Tipo</th>
                         <th className="p-4 text-xs font-bold uppercase text-slate-500">Detalle Operación</th>
+                        <th className="p-4 text-xs font-bold uppercase text-slate-500">Cliente</th>
                         <th className="p-4 text-xs font-bold uppercase text-slate-500 text-center">Salida</th>
                         <th className="p-4 text-xs font-bold uppercase text-slate-500 text-center">Entrada</th>
                         <th className="p-4 text-xs font-bold uppercase text-slate-500">Nota Siigo</th>
@@ -1212,7 +1251,17 @@ const App = () => {
 
                           return (
                             <tr key={t.id} className="hover:bg-slate-50 transition-colors">
-                              <td className="p-4 text-sm font-mono text-slate-500">{t.fecha}</td>
+                              {/* Mostrar solo la fecha (DD/MM/YYYY) en el kardex */}
+                              <td className="p-4 text-sm font-mono text-slate-500">{(() => {
+                                let f = t.fecha && typeof t.fecha === 'string' ? t.fecha.slice(0,10) : '';
+                                if (/^\d{4}-\d{2}-\d{2}$/.test(f)) {
+                                  return f.split('-').reverse().join('/');
+                                } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) {
+                                  return f;
+                                } else {
+                                  return f;
+                                }
+                              })()}</td>
                               <td className="p-4">
                                 <span className={`px-2 py-1 rounded text-[10px] font-black ${
                                   t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-emerald-100 text-emerald-700' : 
@@ -1234,6 +1283,7 @@ const App = () => {
                                       })()}</div>
                                 {t.observaciones && <div className="text-[10px] text-slate-400 italic mt-1">Obs: {t.observaciones}</div>}
                               </td>
+                              <td className="p-4 text-sm font-bold text-indigo-700">{t.clienteNombre || '-'}</td>
                               <td className="p-4 text-center font-black">
                                 {esSalida && (
                                   <span className="text-rose-600">-{formatNumber(cantidad)}</span>
@@ -1297,9 +1347,10 @@ const App = () => {
               <table className="w-full text-left">
                 <thead className="bg-slate-100 border-b">
                   <tr>
-                    <th className="p-4 text-sm font-bold">Fecha/Hora</th>
+                    <th className="p-4 text-sm font-bold">Fecha</th>
                     <th className="p-4 text-sm font-bold">Tipo</th>
                     <th className="p-4 text-sm font-bold">Detalle</th>
+                    <th className="p-4 text-sm font-bold">Cliente</th>
                     <th className="p-4 text-sm font-bold">Unidades</th>
                     <th className="p-4 text-sm font-bold">Referencia / SKU</th>
                     <th className="p-4 text-sm font-bold">Nota de Traslado o Consumo Siigo</th>
@@ -1310,10 +1361,29 @@ const App = () => {
                   {transacciones.map(t => {
                     const unidades = computeUnitsForTransaction(t);
                     const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
+                    // Mostrar solo la fecha (YYYY-MM-DD) en el historial
+                    let fechaSolo = '';
+                    if (t.fecha && typeof t.fecha === 'string') {
+                      // Si ya viene en formato YYYY-MM-DD, úsalo directo
+                      if (/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) fechaSolo = t.fecha;
+                      else if (!isNaN(Date.parse(t.fecha))) fechaSolo = new Date(t.fecha).toISOString().slice(0,10);
+                      else fechaSolo = t.fecha;
+                    }
                     return (
                       <tr key={t.id} className="hover:bg-slate-50">
-                        <td className="p-4 text-slate-500 font-mono">{t.fecha}</td>
-                        <td className="p-4">
+                        {/* Mostrar solo la fecha (DD/MM/YYYY) en el historial */}
+                        <td className="p-4 text-slate-500 font-mono">{(() => {
+                          let f = fechaSolo && typeof fechaSolo === 'string' ? fechaSolo.slice(0,10) : '';
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(f)) {
+                            return f.split('-').reverse().join('/');
+                          } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) {
+                            return f;
+                          } else {
+                            return f;
+                          }
+                        })()}</td>
+                        {/* Tipo */}
+                        <td className="p-4 text-sm font-bold text-indigo-700">
                           <span className={`px-2 py-1 rounded text-[10px] font-black ${
                             t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-green-100 text-green-700' : 
                             t.tipo === 'EDICIÓN' ? 'bg-indigo-100 text-indigo-700' :
@@ -1322,10 +1392,12 @@ const App = () => {
                             {t.tipo === 'CREACIÓN' ? 'INGRESO' : t.tipo}
                           </span>
                         </td>
+                        {/* Detalle */}
                         <td className="p-4">
-                          <div className="font-medium">{t.tipo === 'CREACIÓN' ? 'INGRESO' : t.tipo}</div>
-                          <div className="text-xs text-slate-500 mt-1">{(t.items && t.items.length) ? t.items.map(it => `${formatNumber(it.cantidad)} x ${it.sku}${insumos.find(i => i.sku === it.sku) ? ' - '+insumos.find(i => i.sku === it.sku).nombre : ''}`).join(' | ') : (t.detalle || '')}</div>
+                          <div className="font-medium">{(t.items && t.items.length) ? t.items.map(it => `${formatNumber(it.cantidad)} x ${it.sku}${insumos.find(i => i.sku === it.sku) ? ' - '+insumos.find(i => i.sku === it.sku).nombre : ''}`).join(' | ') : (t.detalle || '')}</div>
                         </td>
+                        {/* Cliente */}
+                        <td className="p-4 text-sm font-bold text-indigo-700">{t.clienteNombre || '-'}</td>
                         <td className="p-4 text-center font-black">{unidades || '-'}</td>
                         <td className="p-4 text-sm text-slate-600">{referencia || '-'}</td>
                         <td className="p-4 font-bold">
