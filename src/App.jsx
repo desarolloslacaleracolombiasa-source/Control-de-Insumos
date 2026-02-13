@@ -273,7 +273,7 @@ const App = () => {
       else {
         setTransacciones((transaccionesData || []).map(t => ({
           id: t.id,
-          fecha: new Date(t.fecha).toLocaleString(),
+          fecha: t.fecha ? (typeof t.fecha === 'string' ? t.fecha.slice(0,10) : '') : '',
           tipo: t.tipo,
           detalle: t.detalle,
           items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -345,7 +345,8 @@ const App = () => {
       nota_siigo: data.notaSiigo,
       bodega_origen_id: data.bodegaOrigenId,
       bodega_destino_id: data.bodegaDestinoId,
-      fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
+      // Guardar la fecha como string ISO con hora 00:00:00Z si viene en formato YYYY-MM-DD
+      fecha: (data.fecha && typeof data.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.fecha)) ? (data.fecha + 'T00:00:00.000Z') : data.fecha
     };
     if (clienteId) insertObj.cliente_id = clienteId;
     // Forzar tipo de cliente_id: si es numérico en la base, convertir a number
@@ -385,7 +386,7 @@ const App = () => {
       .order('fecha', { ascending: false });
     setTransacciones((transaccionesData || []).map(t => ({
         id: t.id,
-        fecha: new Date(t.fecha).toISOString().slice(0,10),
+        fecha: t.fecha ? (typeof t.fecha === 'string' ? t.fecha.slice(0,10) : '') : '',
         tipo: t.tipo,
         detalle: t.detalle,
         items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -629,29 +630,6 @@ const App = () => {
         alert("Movimiento procesado correctamente.");
       }
     });
-
-// INICIO CAMBIO
-    agregarTransaccion(tipo, { 
-      detalle: detalleHistorial,
-      items: itemsAProcesar,
-      observaciones: formData.observaciones,
-      notaSiigo: '',
-      bodegaOrigenId: formData.bodegaOrigen,
-      bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
-      fecha: formData.fecha.slice(0,10)
-    });
-
-    setFormData({ 
-      bodegaOrigen: selectedBodega.id, 
-      bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
-      clienteDestino: '001',
-      fecha: new Date().toISOString().slice(0,10),
-      items: [{ sku: '', cantidad: 0, unidad: '' }], 
-      observaciones: '',
-    });
-// FIN CAMBIO
-
-    alert("Movimiento procesado correctamente.");
   };
 
   const exportToCSV = (filename, rows, headers) => {
