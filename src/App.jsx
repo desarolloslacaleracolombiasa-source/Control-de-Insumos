@@ -281,6 +281,7 @@ const App = () => {
           notaSiigo: t.nota_siigo,
           bodegaOrigenId: t.bodega_origen_id,
           bodegaDestinoId: t.bodega_destino_id,
+          clienteNombre: t.cliente ? t.cliente.nombre : '',
         })));
       }
     };
