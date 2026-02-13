@@ -348,10 +348,9 @@ const App = () => {
       // Guardar la fecha como string ISO con hora 00:00:00Z si viene en formato YYYY-MM-DD
       fecha: (data.fecha && typeof data.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.fecha)) ? (data.fecha + 'T00:00:00.000Z') : data.fecha
     };
-    if (clienteId) insertObj.cliente_id = clienteId;
-    // Forzar tipo de cliente_id: si es numérico en la base, convertir a number
-    if (clienteId && !isNaN(clienteId)) {
-      insertObj.cliente_id = Number(clienteId);
+    // Solo agregar cliente_id si es CONSUMO y existe clienteId
+    if (tipo === 'CONSUMO' && clienteId) {
+      insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
     }
     const { data: transaccion, error } = await supabase
       .from('transacciones')
@@ -989,7 +988,27 @@ const App = () => {
                     </select>
                     <div className="mt-2">
                       <label className="block text-sm font-bold mb-1">Fecha</label>
-                      <input type="date" className="w-full p-2 border rounded" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} />
+                      <input 
+                        type="date" 
+                        className="w-full p-2 border rounded" 
+                        value={formData.fecha}
+                        onChange={e => {
+                          // Solo aceptar fechas válidas en formato YYYY-MM-DD
+                          const val = e.target.value;
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
+                            setFormData(f => ({...f, fecha: val}));
+                          }
+                        }}
+                        onBlur={e => {
+                          // Si la fecha no es válida, restaurar la anterior
+                          if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
+                            setFormData(f => ({...f, fecha: new Date().toISOString().slice(0,10)}));
+                          }
+                        }}
+                        min="2020-01-01"
+                        max="2100-12-31"
+                        required
+                      />
                     </div>
                   </div>
                 )}
