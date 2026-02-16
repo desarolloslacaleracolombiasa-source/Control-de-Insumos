@@ -310,10 +310,11 @@ const App = () => {
   }, []);
 
   const agregarTransaccion = async (tipo, data) => {
-    // Asegura que el id del cliente se guarde correctamente en CONSUMO y exista en la tabla clientes
+      // DEBUG: Mostrar datos que se van a insertar
+      console.log('Intentando guardar transacción:', { tipo, data });
+    // Validación y armado de datos para cada tipo
     let clienteId = null;
     if (tipo === 'CONSUMO') {
-      // Forzar clienteDestino como string y comparar como string, sin padStart
       if (data.clienteDestino && String(data.clienteDestino).trim() !== '') {
         clienteId = String(data.clienteDestino).trim();
       } else if (formData && formData.clienteDestino && String(formData.clienteDestino).trim() !== '') {
@@ -321,7 +322,6 @@ const App = () => {
       } else {
         clienteId = null;
       }
-      // Validar que el cliente exista en la lista de clientes (aceptando coincidencia por string o número)
       if (
         clienteId &&
         !clientes.some(c =>
@@ -335,32 +335,61 @@ const App = () => {
       }
     }
     if (clienteId === '') clienteId = null;
-    const insertObj = {
+
+    // Validación especial para TRASLADO
+    if (tipo === 'TRASLADO') {
+      const origen = Number(data.bodegaOrigenId);
+      const destino = Number(data.bodegaDestinoId);
+      if (!origen || !destino) {
+        showError('Debe seleccionar bodega origen y destino válidas para el traslado.', 'Datos incompletos');
+        return false;
+      }
+      if (origen === destino) {
+        showError('La bodega origen y destino no pueden ser la misma.', 'Traslado inválido');
+        return false;
+      }
+    }
+
+    // Construir el objeto de inserción según el tipo
+    let insertObj = {
       tipo: tipo,
       detalle: data.detalle,
       observaciones: data.observaciones,
       nota_siigo: data.notaSiigo,
-      bodega_origen_id: data.bodegaOrigenId,
-      bodega_destino_id: data.bodegaDestinoId,
-      fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
+      fecha: data.fecha
     };
-    // Solo incluir cliente_id si es CONSUMO
-    if (tipo === 'CONSUMO' && clienteId) {
-      insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
+    if (tipo === 'CONSUMO') {
+      insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
+      if (clienteId) insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
+    } else if (tipo === 'TRASLADO') {
+      insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
+      insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
+    } else {
+      insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
+      if (data.bodegaDestinoId) insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
     }
+
     const { data: transaccion, error } = await supabase
       .from('transacciones')
       .insert(insertObj)
       .select().single();
+    // DEBUG: Mostrar respuesta de Supabase
+    console.log('Respuesta Supabase transacción:', { transaccion, error });
 
     if (error) {
       let msg = (error.message || '') + '\n' + (error.details || '') + '\n' + (error.hint || '') + '\n' + JSON.stringify(error);
       alert("Error al crear la transacción: " + msg);
       console.error("Error creating transaction: ", error);
+      // Mostrar el objeto insertObj para depuración
+      alert('Objeto enviado a Supabase (debug): ' + JSON.stringify(insertObj));
       return false;
     }
 
     if(data.items && data.items.length > 0) {
+      if (!transaccion || !transaccion.id) {
+        alert('No se pudo crear la transacción en la base de datos. Revisa la consola para más detalles.');
+        return false;
+      }
       const itemsToInsert = data.items.map(item => ({
         transaccion_id: transaccion.id,
         insumo_sku: item.sku,
@@ -371,6 +400,7 @@ const App = () => {
         let msg = itemsError.message || itemsError.details || JSON.stringify(itemsError);
         alert("Error al crear los items de la transacción: " + msg);
         console.error("Error creating transaction items: ", itemsError);
+        alert('Items enviados a Supabase (debug): ' + JSON.stringify(itemsToInsert));
         return false;
       }
     }
@@ -593,27 +623,61 @@ const App = () => {
       bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
       fecha: formData.fecha.slice(0,10),
       clienteDestino: formData.clienteDestino
-    }).then(success => {
+    }).then(async success => {
       if (success) {
-        setStockPorBodega(prevStock => {
-          const nuevoStockGlobal = { ...prevStock };
-          itemsAProcesar.forEach(item => {
+        if (tipo === 'TRASLADO' || tipo === 'CONSUMO') {
+          // Actualizar stock local y en Supabase
+          let nuevoStock = { ...stockPorBodega };
+          for (const item of itemsAProcesar) {
             const { sku, cantidad } = item;
-            const bOriId = formData.bodegaOrigen.toString();
-            const bDestId = formData.bodegaDestino.toString();
-            const stockActualInsumo = nuevoStockGlobal[sku] || {};
-            const nuevoStockInsumo = { ...stockActualInsumo };
-            const stockOrigen = parseFloat(nuevoStockInsumo[bOriId] || 0);
+            const bOriId = Number(formData.bodegaOrigen);
             const cantidadMovimiento = parseFloat(cantidad);
-            nuevoStockInsumo[bOriId] = stockOrigen - cantidadMovimiento;
+            let stockOrigen = nuevoStock[sku]?.[bOriId] || 0;
+            // Para traslado, también sumar en destino
             if (tipo === 'TRASLADO') {
-              const stockDestino = parseFloat(nuevoStockInsumo[bDestId] || 0);
-              nuevoStockInsumo[bDestId] = stockDestino + cantidadMovimiento;
+              const bDestId = Number(formData.bodegaDestino);
+              let stockDestino = nuevoStock[sku]?.[bDestId] || 0;
+              nuevoStock[sku] = {
+                ...(nuevoStock[sku] || {}),
+                [bOriId]: stockOrigen - cantidadMovimiento,
+                [bDestId]: stockDestino + cantidadMovimiento
+              };
+              // Actualiza en Supabase
+              await supabase.from('stock').upsert({
+                insumo_sku: sku,
+                bodega_id: bOriId,
+                cantidad: stockOrigen - cantidadMovimiento
+              }, { onConflict: 'insumo_sku,bodega_id' });
+              await supabase.from('stock').upsert({
+                insumo_sku: sku,
+                bodega_id: bDestId,
+                cantidad: stockDestino + cantidadMovimiento
+              }, { onConflict: 'insumo_sku,bodega_id' });
+            } else if (tipo === 'CONSUMO') {
+              // Solo descuenta en la bodega origen
+              nuevoStock[sku] = {
+                ...(nuevoStock[sku] || {}),
+                [bOriId]: stockOrigen - cantidadMovimiento
+              };
+              await supabase.from('stock').upsert({
+                insumo_sku: sku,
+                bodega_id: bOriId,
+                cantidad: stockOrigen - cantidadMovimiento
+              }, { onConflict: 'insumo_sku,bodega_id' });
             }
-            nuevoStockGlobal[sku] = nuevoStockInsumo;
-          });
-          return nuevoStockGlobal;
-        });
+          }
+          setStockPorBodega(nuevoStock);
+          // Refresca desde Supabase para máxima consistencia
+          const { data: stockData, error: stockError } = await supabase.from('stock').select('*');
+          if (!stockError) {
+            const stockMap = {};
+            (stockData || []).forEach(s => {
+              if (!stockMap[s.insumo_sku]) stockMap[s.insumo_sku] = {};
+              stockMap[s.insumo_sku][s.bodega_id] = s.cantidad;
+            });
+            setStockPorBodega(stockMap);
+          }
+        }
         setFormData({ 
           bodegaOrigen: selectedBodega.id, 
           bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
