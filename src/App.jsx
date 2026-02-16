@@ -273,7 +273,7 @@ const App = () => {
       else {
         setTransacciones((transaccionesData || []).map(t => ({
           id: t.id,
-          fecha: t.fecha ? (typeof t.fecha === 'string' ? t.fecha.slice(0,10) : '') : '',
+          fecha: new Date(t.fecha).toLocaleString(),
           tipo: t.tipo,
           detalle: t.detalle,
           items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -281,7 +281,6 @@ const App = () => {
           notaSiigo: t.nota_siigo,
           bodegaOrigenId: t.bodega_origen_id,
           bodegaDestinoId: t.bodega_destino_id,
-          clienteNombre: t.cliente ? t.cliente.nombre : '',
         })));
       }
     };
@@ -345,12 +344,12 @@ const App = () => {
       nota_siigo: data.notaSiigo,
       bodega_origen_id: data.bodegaOrigenId,
       bodega_destino_id: data.bodegaDestinoId,
-      // Guardar la fecha como string ISO con hora 00:00:00Z si viene en formato YYYY-MM-DD
-      fecha: (data.fecha && typeof data.fecha === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(data.fecha)) ? (data.fecha + 'T00:00:00.000Z') : data.fecha
+      fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
     };
-    // Solo agregar cliente_id si es CONSUMO y existe clienteId
-    if (tipo === 'CONSUMO' && clienteId) {
-      insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
+    if (clienteId) insertObj.cliente_id = clienteId;
+    // Forzar tipo de cliente_id: si es numérico en la base, convertir a number
+    if (clienteId && !isNaN(clienteId)) {
+      insertObj.cliente_id = Number(clienteId);
     }
     const { data: transaccion, error } = await supabase
       .from('transacciones')
@@ -385,7 +384,7 @@ const App = () => {
       .order('fecha', { ascending: false });
     setTransacciones((transaccionesData || []).map(t => ({
         id: t.id,
-        fecha: t.fecha ? (typeof t.fecha === 'string' ? t.fecha.slice(0,10) : '') : '',
+        fecha: new Date(t.fecha).toISOString().slice(0,10),
         tipo: t.tipo,
         detalle: t.detalle,
         items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -629,6 +628,29 @@ const App = () => {
         alert("Movimiento procesado correctamente.");
       }
     });
+
+// INICIO CAMBIO
+    agregarTransaccion(tipo, { 
+      detalle: detalleHistorial,
+      items: itemsAProcesar,
+      observaciones: formData.observaciones,
+      notaSiigo: '',
+      bodegaOrigenId: formData.bodegaOrigen,
+      bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
+      fecha: formData.fecha.slice(0,10)
+    });
+
+    setFormData({ 
+      bodegaOrigen: selectedBodega.id, 
+      bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
+      clienteDestino: '001',
+      fecha: new Date().toISOString().slice(0,10),
+      items: [{ sku: '', cantidad: 0, unidad: '' }], 
+      observaciones: '',
+    });
+// FIN CAMBIO
+
+    alert("Movimiento procesado correctamente.");
   };
 
   const exportToCSV = (filename, rows, headers) => {
@@ -975,6 +997,16 @@ const App = () => {
                     >
                       {BODEGAS.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
                     </select>
+                    <div className="mt-2">
+                      <label className="block text-sm font-bold mb-1">Fecha</label>
+                      <input
+                        type="date"
+                        className="w-full p-2 border rounded"
+                        value={formData.fecha}
+                        onChange={e => setFormData({...formData, fecha: e.target.value})}
+                        required
+                      />
+                    </div>
                   </div>
                 ) : (
                   <div>
@@ -988,27 +1020,7 @@ const App = () => {
                     </select>
                     <div className="mt-2">
                       <label className="block text-sm font-bold mb-1">Fecha</label>
-                      <input 
-                        type="date" 
-                        className="w-full p-2 border rounded" 
-                        value={formData.fecha}
-                        onChange={e => {
-                          // Solo aceptar fechas válidas en formato YYYY-MM-DD
-                          const val = e.target.value;
-                          if (/^\d{4}-\d{2}-\d{2}$/.test(val)) {
-                            setFormData(f => ({...f, fecha: val}));
-                          }
-                        }}
-                        onBlur={e => {
-                          // Si la fecha no es válida, restaurar la anterior
-                          if (!/^\d{4}-\d{2}-\d{2}$/.test(e.target.value)) {
-                            setFormData(f => ({...f, fecha: new Date().toISOString().slice(0,10)}));
-                          }
-                        }}
-                        min="2020-01-01"
-                        max="2100-12-31"
-                        required
-                      />
+                      <input type="date" className="w-full p-2 border rounded" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} />
                     </div>
                   </div>
                 )}
