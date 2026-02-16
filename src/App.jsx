@@ -333,8 +333,6 @@ const App = () => {
         showError('El cliente seleccionado no existe en la base de datos. Por favor, verifique o cree el cliente en el maestro.', 'Cliente no válido');
         return false;
       }
-    } else if (data.clienteDestino && String(data.clienteDestino).trim() !== '') {
-      clienteId = String(data.clienteDestino).trim();
     }
     if (clienteId === '') clienteId = null;
     const insertObj = {
@@ -346,10 +344,9 @@ const App = () => {
       bodega_destino_id: data.bodegaDestinoId,
       fecha: data.fecha // opcional: usar fecha proporcionada por el usuario
     };
-    if (clienteId) insertObj.cliente_id = clienteId;
-    // Forzar tipo de cliente_id: si es numérico en la base, convertir a number
-    if (clienteId && !isNaN(clienteId)) {
-      insertObj.cliente_id = Number(clienteId);
+    // Solo incluir cliente_id si es CONSUMO
+    if (tipo === 'CONSUMO' && clienteId) {
+      insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
     }
     const { data: transaccion, error } = await supabase
       .from('transacciones')
@@ -628,29 +625,6 @@ const App = () => {
         alert("Movimiento procesado correctamente.");
       }
     });
-
-// INICIO CAMBIO
-    agregarTransaccion(tipo, { 
-      detalle: detalleHistorial,
-      items: itemsAProcesar,
-      observaciones: formData.observaciones,
-      notaSiigo: '',
-      bodegaOrigenId: formData.bodegaOrigen,
-      bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
-      fecha: formData.fecha.slice(0,10)
-    });
-
-    setFormData({ 
-      bodegaOrigen: selectedBodega.id, 
-      bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
-      clienteDestino: '001',
-      fecha: new Date().toISOString().slice(0,10),
-      items: [{ sku: '', cantidad: 0, unidad: '' }], 
-      observaciones: '',
-    });
-// FIN CAMBIO
-
-    alert("Movimiento procesado correctamente.");
   };
 
   const exportToCSV = (filename, rows, headers) => {
