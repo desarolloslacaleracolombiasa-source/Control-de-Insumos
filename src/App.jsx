@@ -273,7 +273,7 @@ const App = () => {
       else {
         setTransacciones((transaccionesData || []).map(t => ({
           id: t.id,
-          fecha: new Date(t.fecha).toLocaleString(),
+          fecha: t.fecha,
           tipo: t.tipo,
           detalle: t.detalle,
           items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -411,7 +411,7 @@ const App = () => {
       .order('fecha', { ascending: false });
     setTransacciones((transaccionesData || []).map(t => ({
         id: t.id,
-        fecha: new Date(t.fecha).toISOString().slice(0,10),
+        fecha: t.fecha,
         tipo: t.tipo,
         detalle: t.detalle,
         items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
@@ -759,7 +759,7 @@ const App = () => {
 
   const exportHistoryCSV = () => {
     const rows = transacciones.map(t => ({
-      Fecha: t.fecha,
+      Fecha: formatFecha(t.fecha),
       Tipo: t.tipo,
       Detalle: t.detalle,
       Items: (t.items || []).map(it => `${formatNumber(it.cantidad)} x ${it.sku}`).join(' | '),
