@@ -47,6 +47,10 @@ const DEFAULT_CATEGORIES = [
 ];
 
 const App = () => {
+    // --- ESTADOS PARA EDICIÓN Y DETALLE EN HISTORIAL ---
+    const [editFechaId, setEditFechaId] = useState(null); // id de transacción en edición de fecha
+    const [tempFecha, setTempFecha] = useState(''); // fecha temporal para edición
+    const [detalleTransId, setDetalleTransId] = useState(null); // id de transacción para modal detalle
   // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
   const [selectedBodega, setSelectedBodega] = useState(null);
   const [activeTab, setActiveTab] = useState('insumos');
@@ -263,25 +267,31 @@ const App = () => {
         setClientes(clientesData || []);
       }
 
-      // Fetch Transacciones
+      // Fetch Transacciones (sin relaciones)
       const { data: transaccionesData, error: transaccionesError } = await supabase
         .from('transacciones')
-        .select(`*, transaccion_items(*), bodega_origen:bodega_origen_id(nombre), bodega_destino:bodega_destino_id(nombre), cliente:cliente_id(nombre)`)
+        .select(`*, transaccion_items(*)`)
         .order('fecha', { ascending: false });
 
       if (transaccionesError) console.error('Error fetching transactions:', transaccionesError);
       else {
-        setTransacciones((transaccionesData || []).map(t => ({
-          id: t.id,
-          fecha: t.fecha,
-          tipo: t.tipo,
-          detalle: t.detalle,
-          items: (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad })),
-          observaciones: t.observaciones,
-          notaSiigo: t.nota_siigo,
-          bodegaOrigenId: t.bodega_origen_id,
-          bodegaDestinoId: t.bodega_destino_id,
-        })));
+        setTransacciones((transaccionesData || []).map(t => {
+          const items = (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad }));
+          return {
+            id: t.id,
+            fecha: t.fecha,
+            tipo: t.tipo,
+            detalle: t.detalle,
+            items,
+            cantidad: (items.length > 0 ? items[0].cantidad : ''),
+            observaciones: t.observaciones,
+            notaSiigo: t.nota_siigo,
+            bodegaOrigenId: t.bodega_origen_id,
+            bodegaDestinoId: t.bodega_destino_id,
+            clienteId: t.cliente_id,
+            proveedorId: t.proveedor_id,
+          };
+        }));
       }
     };
     fetchData();
@@ -364,9 +374,10 @@ const App = () => {
     } else if (tipo === 'TRASLADO') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
       insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
-    } else {
+    } else if (tipo === 'INGRESO' || tipo === 'CREACIÓN') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
       if (data.bodegaDestinoId) insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
+      if (data.proveedorId) insertObj.proveedor_id = isNaN(data.proveedorId) ? data.proveedorId : Number(data.proveedorId);
     }
 
     const { data: transaccion, error } = await supabase
@@ -1436,27 +1447,42 @@ const App = () => {
                   {transacciones.map(t => {
                     const unidades = computeUnitsForTransaction(t);
                     const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
-                    // Mostrar solo la fecha (YYYY-MM-DD) en el historial
                     let fechaSolo = '';
                     if (t.fecha && typeof t.fecha === 'string') {
-                      // Si ya viene en formato YYYY-MM-DD, úsalo directo
                       if (/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) fechaSolo = t.fecha;
                       else if (!isNaN(Date.parse(t.fecha))) fechaSolo = new Date(t.fecha).toISOString().slice(0,10);
                       else fechaSolo = t.fecha;
                     }
                     return (
                       <tr key={t.id} className="hover:bg-slate-50">
-                        {/* Mostrar solo la fecha (DD/MM/YYYY) en el historial */}
-                        <td className="p-4 text-slate-500 font-mono">{(() => {
-                          let f = fechaSolo && typeof fechaSolo === 'string' ? fechaSolo.slice(0,10) : '';
-                          if (/^\d{4}-\d{2}-\d{2}$/.test(f)) {
-                            return f.split('-').reverse().join('/');
-                          } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) {
-                            return f;
-                          } else {
-                            return f;
-                          }
-                        })()}</td>
+                        {/* Fecha */}
+                        <td className="p-4 text-slate-500 font-mono">
+                          {editFechaId === t.id ? (
+                            <div className="flex items-center gap-1">
+                              <input type="date" value={tempFecha} onChange={e => setTempFecha(e.target.value)} className="border rounded p-1 text-xs" />
+                              <button onClick={async () => {
+                                await supabase.from('transacciones').update({ fecha: tempFecha }).eq('id', t.id);
+                                setTransacciones(transacciones.map(tx => tx.id === t.id ? { ...tx, fecha: tempFecha } : tx));
+                                setEditFechaId(null);
+                              }} className="text-emerald-600"><Check size={14} /></button>
+                              <button onClick={() => setEditFechaId(null)} className="text-rose-600"><Trash2 size={14} /></button>
+                            </div>
+                          ) : (
+                            <>
+                              <span>{(() => {
+                                let f = fechaSolo && typeof fechaSolo === 'string' ? fechaSolo.slice(0,10) : '';
+                                if (/^\d{4}-\d{2}-\d{2}$/.test(f)) {
+                                  return f.split('-').reverse().join('/');
+                                } else if (/^\d{2}\/\d{2}\/\d{4}$/.test(f)) {
+                                  return f;
+                                } else {
+                                  return f;
+                                }
+                              })()}</span>
+                              <button onClick={() => { setEditFechaId(t.id); setTempFecha(fechaSolo); }} className="ml-2 text-indigo-600"><Edit2 size={14} /></button>
+                            </>
+                          )}
+                        </td>
                         {/* Tipo */}
                         <td className="p-4 text-sm font-bold text-indigo-700">
                           <span className={`px-2 py-1 rounded text-[10px] font-black ${
@@ -1471,10 +1497,30 @@ const App = () => {
                         <td className="p-4">
                           <div className="font-medium">{(t.items && t.items.length) ? t.items.map(it => `${formatNumber(it.cantidad)} x ${it.sku}${insumos.find(i => i.sku === it.sku) ? ' - '+insumos.find(i => i.sku === it.sku).nombre : ''}`).join(' | ') : (t.detalle || '')}</div>
                         </td>
-                        {/* Cliente */}
-                        <td className="p-4 text-sm font-bold text-indigo-700">{t.clienteNombre || '-'}</td>
+                        {/* Cliente o Proveedor */}
+                        <td className="p-4 text-sm font-bold text-indigo-700">
+                          {(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO')
+                            ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-')
+                            : (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN')
+                              ? (
+                                  proveedores.find(p => String(p.id) === String(t.proveedorId))?.nombre
+                                  || (t.proveedorId ? `ID: ${t.proveedorId}` : '-')
+                                )
+                              : '-'}
+                        </td>
+                        {/* SKU (solo para INGRESO/CREACIÓN) */}
+                        {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && (
+                          <td className="p-4 text-center font-mono">{(t.items && t.items.length > 0) ? t.items[0].sku : '-'}</td>
+                        )}
+                        {/* Cliente (solo para INGRESO/CREACIÓN) */}
+                        {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && (
+                          <td className="p-4 text-sm font-bold text-indigo-700">{(t.clienteId && clientes.find(c => String(c.id) === String(t.clienteId))?.nombre) || '-'}</td>
+                        )}
+                        {/* Unidades */}
                         <td className="p-4 text-center font-black">{unidades || '-'}</td>
+                        {/* Referencia / SKU */}
                         <td className="p-4 text-sm text-slate-600">{referencia || '-'}</td>
+                        {/* Nota Siigo */}
                         <td className="p-4 font-bold">
                           {(t.tipo === 'TRASLADO' || t.tipo === 'CONSUMO') ? (
                             editingNotaId === t.id ? (
@@ -1502,10 +1548,94 @@ const App = () => {
                             '-'
                           )}
                         </td>
+                        {/* Observaciones */}
                         <td className="p-4 italic text-slate-500">{t.observaciones || '-'}</td>
+                        {/* Botón para ver detalle */}
+                        <td className="p-4">
+                          <button onClick={() => setDetalleTransId(t.id)} className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold">Ver Detalle</button>
+                        </td>
                       </tr>
                     );
                   })}
+                  {/* Modal de detalle fuera del map */}
+                  {detalleTransId !== null && (() => {
+                    const t = transacciones.find(tx => tx.id === detalleTransId);
+                    if (!t) return null;
+                    // SKU y cliente para INGRESO/CREACIÓN
+                    const sku = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && t.items && t.items.length > 0 ? t.items[0].sku : undefined;
+                    const clienteIngreso = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && t.clienteId ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-') : undefined;
+                    const unidades = computeUnitsForTransaction(t);
+                    const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
+                    let fechaSolo = '';
+                    if (t.fecha && typeof t.fecha === 'string') {
+                      if (/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) fechaSolo = t.fecha;
+                      else if (!isNaN(Date.parse(t.fecha))) fechaSolo = new Date(t.fecha).toISOString().slice(0,10);
+                      else fechaSolo = t.fecha;
+                    }
+                    // Determinar cliente o proveedor
+                    let contraparte = '-';
+                    if (t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') {
+                      contraparte = clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-';
+                    } else if (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') {
+                      contraparte = proveedores.find(p => String(p.id) === String(t.proveedorId))?.nombre
+                        || (t.proveedorId ? `ID: ${t.proveedorId}` : '-');
+                    }
+                    // Cantidad para INGRESO/CREACIÓN
+                    const cantidad = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') ? (t.cantidad || '-') : undefined;
+                    return (
+                      <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
+                        <div className="bg-white p-6 rounded shadow-xl w-full max-w-md">
+                          <h3 className="text-lg font-bold mb-4">Detalle de Transacción</h3>
+                          <div className="space-y-2">
+                            {(sku !== undefined) && (<div><b>SKU:</b> {sku}</div>)}
+                            {(clienteIngreso !== undefined) && (<div><b>Cliente:</b> {clienteIngreso}</div>)}
+                            {(cantidad !== undefined) && (<div><b>Cantidad:</b> {cantidad}</div>)}
+                            <div><b>Fecha:</b> {fechaSolo}</div>
+                            <div><b>Tipo de movimiento:</b> {t.tipo}</div>
+                            <div><b>Cliente/Proveedor:</b> {contraparte}</div>
+                            <div><b>Unidades:</b> {unidades || '-'}</div>
+                            <div><b>Referencia/SKU:</b> {referencia || '-'}</div>
+                            <div><b>Observaciones:</b> {t.observaciones || '-'}</div>
+                            {(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') && (t.items && t.items.length > 0) && (
+                              <div>
+                                <b>Productos:</b>
+                                <table className="w-full text-xs mt-1 border">
+                                  <thead>
+                                    <tr className="bg-slate-100">
+                                      <th className="border px-2 py-1">SKU</th>
+                                      <th className="border px-2 py-1">Nombre</th>
+                                      <th className="border px-2 py-1">Cantidad</th>
+                                      <th className="border px-2 py-1">Unidad</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {t.items.map(it => {
+                                      const ins = insumos.find(i => i.sku === it.sku);
+                                      return (
+                                        <tr key={it.sku}>
+                                          <td className="border px-2 py-1 font-mono">{it.sku}</td>
+                                          <td className="border px-2 py-1">{ins?.nombre || '-'}</td>
+                                          <td className="border px-2 py-1 text-right">{formatNumber(it.cantidad)}</td>
+                                          <td className="border px-2 py-1">{ins?.unidadPrincipal || '-'}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                            {/* Para otros tipos, mostrar lista simple como antes */}
+                            {!(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') && (
+                              <div><b>Items:</b> {(t.items || []).map(it => (
+                                <div key={it.sku} className="pl-2 text-xs">{it.sku} - {formatNumber(it.cantidad)} {insumos.find(i => i.sku === it.sku)?.nombre || ''}</div>
+                              ))}</div>
+                            )}
+                          </div>
+                          <button onClick={() => setDetalleTransId(null)} className="mt-4 bg-emerald-600 text-white px-4 py-2 rounded">Cerrar</button>
+                        </div>
+                      </div>
+                    );
+                  })()}
                 </tbody>
               </table>
             </div>
