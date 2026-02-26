@@ -820,7 +820,13 @@ const App = () => {
     }
   };
 
-  const handleUpdateNotaSiigo = (id) => {
+  const handleUpdateNotaSiigo = async (id) => {
+    // Actualiza en Supabase y luego en el estado local
+    const { error } = await supabase.from('transacciones').update({ nota_siigo: tempNotaValue }).eq('id', id);
+    if (error) {
+      showError(error, 'Error guardando la nota de traslado/consumo');
+      return;
+    }
     setTransacciones(prev => prev.map(t => t.id === id ? { ...t, notaSiigo: tempNotaValue } : t));
     setEditingNotaId(null);
   };
@@ -1461,7 +1467,12 @@ const App = () => {
                             <div className="flex items-center gap-1">
                               <input type="date" value={tempFecha} onChange={e => setTempFecha(e.target.value)} className="border rounded p-1 text-xs" />
                               <button onClick={async () => {
-                                await supabase.from('transacciones').update({ fecha: tempFecha }).eq('id', t.id);
+                                // Guarda la fecha editada en Supabase y luego en el estado local
+                                const { error } = await supabase.from('transacciones').update({ fecha: tempFecha }).eq('id', t.id);
+                                if (error) {
+                                  showError(error, 'Error guardando la fecha de la transacción');
+                                  return;
+                                }
                                 setTransacciones(transacciones.map(tx => tx.id === t.id ? { ...tx, fecha: tempFecha } : tx));
                                 setEditFechaId(null);
                               }} className="text-emerald-600"><Check size={14} /></button>
