@@ -26,7 +26,7 @@ import {
 } from 'lucide-react';
 import { supabase } from './supabaseClient';
 
-// --- CONFIGURACIÓN INICIAL ---
+// --- CONFIGURACIÓN INICIAL. ---
 const BODEGAS = [
   { id: 1, nombre: 'Terrapuerto', principal: true },
   { id: 2, nombre: 'Bogota Plaza', principal: false },
