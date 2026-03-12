@@ -51,6 +51,9 @@ const App = () => {
     const [editFechaId, setEditFechaId] = useState(null); // id de transacción en edición de fecha
     const [tempFecha, setTempFecha] = useState(''); // fecha temporal para edición
     const [detalleTransId, setDetalleTransId] = useState(null); // id de transacción para modal detalle
+
+    // Referencia global a fetchData para uso en callbacks
+    const fetchDataRef = React.useRef();
   // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
   const [selectedBodega, setSelectedBodega] = useState(null);
   const [activeTab, setActiveTab] = useState('insumos');
@@ -294,6 +297,7 @@ const App = () => {
         }));
       }
     };
+    fetchDataRef.current = fetchData;
     fetchData();
     // Autorefresh cada 10 segundos
     const interval = setInterval(fetchData, 10000);
@@ -1447,6 +1451,7 @@ const App = () => {
                     <th className="p-4 text-sm font-bold">Referencia / SKU</th>
                     <th className="p-4 text-sm font-bold">Nota de Traslado o Consumo Siigo</th>
                     <th className="p-4 text-sm font-bold">Observaciones</th>
+                    <th className="p-4 text-sm font-bold">Eliminar</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y text-sm">
@@ -1561,6 +1566,65 @@ const App = () => {
                         </td>
                         {/* Observaciones */}
                         <td className="p-4 italic text-slate-500">{t.observaciones || '-'}</td>
+                        {/* Botón eliminar registro */}
+                        <td className="p-4">
+                          <button
+                            className="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold hover:bg-rose-700"
+                            onClick={async () => {
+                              if (!window.confirm('¿Seguro que desea eliminar este registro? El inventario se recargará automáticamente.')) return;
+                              // 1. Recuperar los items de la transacción antes de borrar
+                              const { data: itemsToRestore, error: fetchItemsError } = await supabase.from('transaccion_items').select('*').eq('transaccion_id', t.id);
+                              if (fetchItemsError) {
+                                showError(fetchItemsError, 'Error recuperando items de la transacción');
+                                return;
+                              }
+                              // 2. Sumar stock de vuelta según tipo de transacción
+                              if (itemsToRestore && itemsToRestore.length > 0) {
+                                for (const item of itemsToRestore) {
+                                  let bodegaId = null;
+                                  let cantidad = parseFloat(item.cantidad) || 0;
+                                  // CREACIÓN/INGRESO suman en destino, CONSUMO suma en origen, TRASLADO depende
+                                  if (t.tipo === 'CONSUMO') {
+                                    bodegaId = t.bodegaOrigenId;
+                                  } else if (t.tipo === 'TRASLADO') {
+                                    // Si fue salida de origen, devolver a origen; si fue entrada en destino, restar de destino
+                                    bodegaId = t.bodegaOrigenId;
+                                  } else if (t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO') {
+                                    bodegaId = t.bodegaDestinoId || t.bodegaOrigenId;
+                                  }
+                                  if (bodegaId) {
+                                    // Obtener stock actual
+                                    const { data: stockRow, error: stockError } = await supabase.from('stock').select('cantidad').eq('insumo_sku', item.insumo_sku).eq('bodega_id', bodegaId).maybeSingle();
+                                    let nuevaCantidad = (stockRow && stockRow.cantidad ? parseFloat(stockRow.cantidad) : 0) + cantidad;
+                                    await supabase.from('stock').upsert({ insumo_sku: item.insumo_sku, bodega_id: bodegaId, cantidad: nuevaCantidad }, { onConflict: 'insumo_sku,bodega_id' });
+                                  }
+                                }
+                              }
+                              // 3. Eliminar primero los items relacionados
+                              const { data: itemsData, error: itemsError } = await supabase.from('transaccion_items').delete().eq('transaccion_id', t.id);
+                              if (itemsError) {
+                                showError(itemsError, 'Error eliminando items de la transacción');
+                                alert('Error eliminando items: ' + (itemsError.message || JSON.stringify(itemsError)));
+                                return;
+                              }
+                              // 4. Luego eliminar la transacción
+                              const { data: transData, error: transError } = await supabase.from('transacciones').delete().eq('id', t.id);
+                              if (transError) {
+                                showError(transError, 'Error eliminando transacción');
+                                alert('Error eliminando transacción: ' + (transError.message || JSON.stringify(transError)));
+                                return;
+                              }
+                              // 5. Forzar recarga de datos desde la base de datos usando la referencia
+                              if (fetchDataRef.current) {
+                                await fetchDataRef.current();
+                                alert('Eliminación completada. Inventario y datos recargados.');
+                              } else {
+                                setTransacciones(prev => prev.filter(tx => tx.id !== t.id));
+                                alert('Eliminación completada. (Recarga parcial)');
+                              }
+                            }}
+                          >Eliminar</button>
+                        </td>
                         {/* Botón para ver detalle */}
                         <td className="p-4">
                           <button onClick={() => setDetalleTransId(t.id)} className="bg-emerald-100 text-emerald-700 px-2 py-1 rounded text-xs font-bold">Ver Detalle</button>
