@@ -52,6 +52,9 @@ const App = () => {
     const [tempFecha, setTempFecha] = useState(''); // fecha temporal para edición
     const [detalleTransId, setDetalleTransId] = useState(null); // id de transacción para modal detalle
 
+    // Filtro de tipo para historial
+    const [historialTipoFiltro, setHistorialTipoFiltro] = useState('');
+
     // Referencia global a fetchData para uso en callbacks
     const fetchDataRef = React.useRef();
   // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
@@ -1439,6 +1442,19 @@ const App = () => {
               <h2 className="text-2xl font-bold">Historial de Transacciones</h2>
               <button onClick={exportHistoryCSV} className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
             </div>
+            <div className="flex items-center gap-4 mb-2">
+              <label className="text-sm font-bold">Filtrar por tipo:</label>
+              <select
+                className="p-2 border rounded bg-slate-50 text-sm"
+                value={historialTipoFiltro}
+                onChange={e => setHistorialTipoFiltro(e.target.value)}
+              >
+                <option value="">Todos</option>
+                <option value="CONSUMO">Consumo</option>
+                <option value="INGRESO">Ingreso</option>
+                <option value="TRASLADO">Traslado</option>
+              </select>
+            </div>
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
               <table className="w-full text-left">
                 <thead className="bg-slate-100 border-b">
@@ -1455,7 +1471,9 @@ const App = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y text-sm">
-                  {transacciones.map(t => {
+                  {transacciones
+                    .filter(t => !historialTipoFiltro || t.tipo === historialTipoFiltro)
+                    .map(t => {
                     const unidades = computeUnitsForTransaction(t);
                     const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
                     let fechaSolo = '';
