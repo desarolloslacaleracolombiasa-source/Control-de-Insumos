@@ -1837,6 +1837,12 @@ const App = () => {
                           <button
                             className="bg-rose-600 text-white px-2 py-1 rounded text-xs font-bold hover:bg-rose-700"
                             onClick={async () => {
+                              // Solicitar clave antes de permitir eliminación
+                              const clave = window.prompt('Ingrese la clave de autorización para eliminar este registro:');
+                              if (clave !== 'CALERA26') {
+                                alert('Clave inválida. Operación cancelada.');
+                                return;
+                              }
                               if (!window.confirm('¿Seguro que desea eliminar este registro? El inventario se recargará automáticamente.')) return;
                               // 1. Recuperar los items de la transacción antes de borrar
                               const { data: itemsToRestore, error: fetchItemsError } = await supabase.from('transaccion_items').select('*').eq('transaccion_id', t.id);
