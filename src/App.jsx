@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import logo from '../LOGO CAALERA.png';
+import * as XLSX from 'xlsx';
 import { 
   Package, 
   Truck, 
@@ -54,6 +55,10 @@ const App = () => {
 
     // Filtro de tipo para historial
     const [historialTipoFiltro, setHistorialTipoFiltro] = useState('');
+    
+    // Filtro de fechas para historial
+    const [historialFechaInicio, setHistorialFechaInicio] = useState('');
+    const [historialFechaFin, setHistorialFechaFin] = useState('');
 
     // Referencia global a fetchData para uso en callbacks
     const fetchDataRef = React.useRef();
@@ -187,6 +192,21 @@ const App = () => {
     return parts.join('.');
   };
 
+  const formatFecha = (fecha) => {
+    if (!fecha) return '';
+    const raw = typeof fecha === 'string' ? fecha.slice(0, 10) : '';
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw.split('-').reverse().join('/');
+    if (/^\d{2}\/\d{2}\/\d{4}$/.test(raw)) return raw;
+    const parsed = new Date(fecha);
+    if (!isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10).split('-').reverse().join('/');
+    return String(fecha);
+  };
+
+  const getTerceroName = (t) => {
+    if (!t) return '';
+    return t.clienteNombre || (t.cliente && t.cliente.nombre) || t.proveedorNombre || (t.proveedor && t.proveedor.nombre) || '';
+  };
+
   const showError = (err, prefix = 'Error') => {
     try {
       console.error(prefix, err);
@@ -273,10 +293,10 @@ const App = () => {
         setClientes(clientesData || []);
       }
 
-      // Fetch Transacciones (sin relaciones)
+      // Fetch Transacciones con relaciones válidas
       const { data: transaccionesData, error: transaccionesError } = await supabase
         .from('transacciones')
-        .select(`*, transaccion_items(*)`)
+        .select(`*, transaccion_items(*), bodega_origen:bodega_origen_id(nombre), bodega_destino:bodega_destino_id(nombre), cliente:cliente_id(nombre)`)
         .order('fecha', { ascending: false });
 
       if (transaccionesError) console.error('Error fetching transactions:', transaccionesError);
@@ -294,8 +314,12 @@ const App = () => {
             notaSiigo: t.nota_siigo,
             bodegaOrigenId: t.bodega_origen_id,
             bodegaDestinoId: t.bodega_destino_id,
+            bodegaOrigenNombre: t.bodega_origen?.nombre || '',
+            bodegaDestinoNombre: t.bodega_destino?.nombre || '',
             clienteId: t.cliente_id,
             proveedorId: t.proveedor_id,
+            clienteNombre: t.cliente?.nombre || '',
+            proveedorNombre: proveedores.find(p => String(p.id) === String(t.proveedor_id))?.nombre || ''
           };
         }));
       }
@@ -438,6 +462,7 @@ const App = () => {
         bodegaOrigenId: t.bodega_origen_id,
         bodegaDestinoId: t.bodega_destino_id,
         clienteNombre: t.cliente ? t.cliente.nombre : '',
+        proveedorNombre: proveedores.find(p => String(p.id) === String(t.proveedor_id))?.nombre || ''
       })));
     return true;
   };
@@ -776,26 +801,104 @@ const App = () => {
   };
 
   const exportHistoryCSV = () => {
-    const rows = transacciones.map(t => ({
-      Fecha: formatFecha(t.fecha),
-      Tipo: t.tipo,
-      Detalle: t.detalle,
-      Items: (t.items || []).map(it => `${formatNumber(it.cantidad)} x ${it.sku}`).join(' | '),
-      Nota: t.notaSiigo || '',
-      Observaciones: t.observaciones || ''
-    }));
-    exportToCSV('historial.csv', rows, ['Fecha','Tipo','Detalle','Items','Nota','Observaciones']);
+    const rows = transacciones.flatMap(t => {
+      const tercero = getTerceroName(t) || '-';
+      if (t.items && t.items.length > 0) {
+        return t.items.map(it => ({
+          Fecha: formatFecha(t.fecha),
+          Tipo: t.tipo,
+          Codigo: it.sku,
+          Cantidad: formatNumber(it.cantidad),
+          Tercero: tercero,
+          Detalle: t.detalle || '',
+          Nota: t.notaSiigo || '',
+          Observaciones: t.observaciones || ''
+        }));
+      }
+      return [{
+        Fecha: formatFecha(t.fecha),
+        Tipo: t.tipo,
+        Codigo: '-',
+        Cantidad: '-',
+        Tercero: tercero,
+        Detalle: t.detalle || '',
+        Nota: t.notaSiigo || '',
+        Observaciones: t.observaciones || ''
+      }];
+    });
+    exportToCSV('historial.csv', rows, ['Fecha','Tipo','Codigo','Cantidad','Tercero','Detalle','Nota','Observaciones']);
   };
 
-  const exportKardexCSV = () => {
-    // Helper para formatear fecha solo como DD/MM/YYYY
-    const formatFecha = (f) => {
+  const exportHistoryExcel = () => {
+    // Filtrar transacciones según criterios actuales
+    const transaccionesFiltradas = transacciones.filter(t => {
+      // Filtro por tipo
+      if (historialTipoFiltro && t.tipo !== historialTipoFiltro) return false;
+      
+      // Filtro por rango de fechas
+      if (historialFechaInicio || historialFechaFin) {
+        let fechaSolo = '';
+        if (t.fecha && typeof t.fecha === 'string') {
+          if (/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) fechaSolo = t.fecha;
+          else if (!isNaN(Date.parse(t.fecha))) fechaSolo = new Date(t.fecha).toISOString().slice(0,10);
+        }
+        if (historialFechaInicio && fechaSolo < historialFechaInicio) return false;
+        if (historialFechaFin && fechaSolo > historialFechaFin) return false;
+      }
+      
+      return true;
+    });
+
+    // Helper para formatear fecha
+    const formatearFecha = (f) => {
       if (!f) return '';
       let s = typeof f === 'string' ? f.slice(0,10) : '';
       if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s.split('-').reverse().join('/');
       if (/^\d{2}\/\d{2}\/\d{4}$/.test(s)) return s;
       return s;
     };
+
+    // Crear datos para Excel
+    const rows = transaccionesFiltradas.flatMap(t => {
+      const tercero = getTerceroName(t) || '-';
+      if (t.items && t.items.length > 0) {
+        return t.items.map(it => ({
+          Fecha: formatearFecha(t.fecha),
+          Tipo: t.tipo,
+          SKU: it.sku,
+          Cantidad: formatNumber(it.cantidad),
+          Tercero: tercero,
+          Detalle: t.detalle || '',
+          Nota: t.notaSiigo || '',
+          Observaciones: t.observaciones || ''
+        }));
+      }
+      return [{
+        Fecha: formatearFecha(t.fecha),
+        Tipo: t.tipo,
+        SKU: '-',
+        Cantidad: '-',
+        Tercero: tercero,
+        Detalle: t.detalle || '',
+        Nota: t.notaSiigo || '',
+        Observaciones: t.observaciones || ''
+      }];
+    });
+
+    // Crear libro de trabajo y hoja
+    const worksheet = XLSX.utils.json_to_sheet(rows);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Historial');
+
+    // Ajustar ancho de columnas
+    const colWidths = [15, 12, 18, 12, 20, 20, 15, 20];
+    worksheet['!cols'] = colWidths.map(w => ({ wch: w }));
+
+    // Descargar archivo
+    XLSX.writeFile(workbook, `historial_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  const exportKardexCSV = () => {
     if (showGeneralKardex) {
       const rows = transacciones.flatMap(t => (t.items || []).map(it => ({
         Fecha: formatFecha(t.fecha),
@@ -804,10 +907,10 @@ const App = () => {
         Tipo: t.tipo,
         Origen: BODEGAS.find(b => b.id == t.bodegaOrigenId)?.nombre || '',
         Destino: BODEGAS.find(b => b.id == t.bodegaDestinoId)?.nombre || '',
-        Cliente: t.clienteNombre || '',
+        Tercero: getTerceroName(t) || '',
         Cantidad: formatNumber(it.cantidad)
       })));
-      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Cliente','Cantidad']);
+      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Tercero','Cantidad']);
     } else if (kardexSku) {
       const rows = transacciones.filter(t => t.sku === kardexSku || (t.items && t.items.some(it => it.sku === kardexSku))).map(t => {
         const it = (t.items || []).find(i => i.sku === kardexSku);
@@ -816,12 +919,12 @@ const App = () => {
           Fecha: formatFecha(t.fecha),
           Tipo: t.tipo,
           Detalle: t.detalle,
-          Cliente: t.clienteNombre || '',
+          Tercero: getTerceroName(t) || '',
           Cantidad: cantidad,
           Observaciones: t.observaciones || ''
         };
       });
-      exportToCSV(`kardex_${kardexSku}.csv`, rows, ['Fecha','Tipo','Detalle','Cliente','Cantidad','Observaciones']);
+      exportToCSV(`kardex_${kardexSku}.csv`, rows, ['Fecha','Tipo','Detalle','Tercero','Cantidad','Observaciones']);
     } else {
       alert('Seleccione un SKU o active Kardex General para exportar');
     }
@@ -1336,16 +1439,25 @@ const App = () => {
                           const origenId = t.bodegaOrigenId ? String(t.bodegaOrigenId) : null;
                           const destinoId = t.bodegaDestinoId ? String(t.bodegaDestinoId) : null;
 
+                          // CONSUMO: salida de la sede actual
                           if (t.tipo === 'CONSUMO' && origenId === actualSedeId) {
                             esSalida = true;
-                          } else if (t.tipo === 'TRASLADO') {
+                          } 
+                          // TRASLADO: salida de origen o entrada en destino
+                          else if (t.tipo === 'TRASLADO') {
                             if (origenId === actualSedeId) {
                               esSalida = true;
                             } else if (destinoId === actualSedeId) {
                               esEntrada = true;
                             }
-                          } else if ((t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO') && (destinoId === actualSedeId || (t.sku === kardexSku && t.bodegaDestinoId == selectedBodega.id))) {
-                            esEntrada = true;
+                          } 
+                          // INGRESO/CREACIÓN: entrada en la sede destino
+                          else if (t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' || t.tipo === 'CREACION') {
+                            if (destinoId === actualSedeId || (destinoId && String(destinoId) === actualSedeId)) {
+                              esEntrada = true;
+                            } else if (t.bodegaDestinoId === selectedBodega.id) {
+                              esEntrada = true;
+                            }
                           }
 
                           return (
@@ -1440,20 +1552,43 @@ const App = () => {
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <h2 className="text-2xl font-bold">Historial de Transacciones</h2>
-              <button onClick={exportHistoryCSV} className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
+              <div className="flex gap-2">
+                <button onClick={exportHistoryCSV} className="px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
+                <button onClick={exportHistoryExcel} className="px-3 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700">Exportar Excel</button>
+              </div>
             </div>
-            <div className="flex items-center gap-4 mb-2">
-              <label className="text-sm font-bold">Filtrar por tipo:</label>
-              <select
-                className="p-2 border rounded bg-slate-50 text-sm"
-                value={historialTipoFiltro}
-                onChange={e => setHistorialTipoFiltro(e.target.value)}
-              >
-                <option value="">Todos</option>
-                <option value="CONSUMO">Consumo</option>
-                <option value="INGRESO">Ingreso</option>
-                <option value="TRASLADO">Traslado</option>
-              </select>
+            <div className="flex items-center gap-4 mb-2 flex-wrap">
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-bold">Filtrar por tipo:</label>
+                <select
+                  className="p-2 border rounded bg-slate-50 text-sm"
+                  value={historialTipoFiltro}
+                  onChange={e => setHistorialTipoFiltro(e.target.value)}
+                >
+                  <option value="">Todos</option>
+                  <option value="CONSUMO">Consumo</option>
+                  <option value="INGRESO">Ingreso</option>
+                  <option value="TRASLADO">Traslado</option>
+                </select>
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-bold">Desde:</label>
+                <input
+                  type="date"
+                  className="p-2 border rounded bg-slate-50 text-sm"
+                  value={historialFechaInicio}
+                  onChange={e => setHistorialFechaInicio(e.target.value)}
+                />
+              </div>
+              <div className="flex items-center gap-2">
+                <label className="text-sm font-bold">Hasta:</label>
+                <input
+                  type="date"
+                  className="p-2 border rounded bg-slate-50 text-sm"
+                  value={historialFechaFin}
+                  onChange={e => setHistorialFechaFin(e.target.value)}
+                />
+              </div>
             </div>
             <div className="bg-white rounded-xl shadow-sm border overflow-hidden">
               <table className="w-full text-left">
@@ -1472,9 +1607,35 @@ const App = () => {
                 </thead>
                 <tbody className="divide-y text-sm">
                   {transacciones
-                    .filter(t => !historialTipoFiltro || t.tipo === historialTipoFiltro)
+                    .filter(t => {
+                      // Filtro por tipo
+                      if (historialTipoFiltro && t.tipo !== historialTipoFiltro) return false;
+                      
+                      // Filtro por rango de fechas
+                      if (historialFechaInicio || historialFechaFin) {
+                        let fechaSolo = '';
+                        if (t.fecha && typeof t.fecha === 'string') {
+                          if (/^\d{4}-\d{2}-\d{2}$/.test(t.fecha)) fechaSolo = t.fecha;
+                          else if (!isNaN(Date.parse(t.fecha))) fechaSolo = new Date(t.fecha).toISOString().slice(0,10);
+                        }
+                        if (historialFechaInicio && fechaSolo < historialFechaInicio) return false;
+                        if (historialFechaFin && fechaSolo > historialFechaFin) return false;
+                      }
+                      
+                      return true;
+                    })
                     .map(t => {
-                    const unidades = computeUnitsForTransaction(t);
+                    let unidades = computeUnitsForTransaction(t);
+                    
+                    // Mostrar solo la cantidad ingresada sin signo + para tipo INGRESO
+                    if (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'CREACION') {
+                      const items = t.items || [];
+                      if (items.length > 0) {
+                        const totalIngreso = items.reduce((sum, it) => sum + (parseFloat(it.cantidad) || 0), 0);
+                        unidades = formatNumber(totalIngreso);
+                      }
+                    }
+                    
                     const referencia = (t.items || []).length ? (t.items.map(it => `${it.sku}${getReferenceForSku(it.sku) ? ' | Ref: '+getReferenceForSku(it.sku) : ''}`).join(' | ')) : (t.detalle || '');
                     let fechaSolo = '';
                     if (t.fecha && typeof t.fecha === 'string') {
