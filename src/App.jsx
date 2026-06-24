@@ -169,10 +169,17 @@ const App = () => {
     bodegaDestino: 2,
     clienteDestino: '001', 
     fecha: new Date().toISOString().slice(0,10),
-    items: [{ sku: '', cantidad: '', unidad: '' }],
+    items: [{ _id: Date.now(), sku: '', cantidad: '', unidad: '' }],
     observaciones: '',
     notaSiigo: ''
   });
+
+  // Controlled inputs for Maestro creation forms to avoid uncontrolled remount issues
+  const [newProvIdState, setNewProvIdState] = useState('');
+  const [newProvNameState, setNewProvNameState] = useState('');
+  const [newCliIdState, setNewCliIdState] = useState('');
+  const [newCliNameState, setNewCliNameState] = useState('');
+  const [newCliNitState, setNewCliNitState] = useState('');
 
   // --- ESTADO EDICION NOTA TRASLADO EN HISTORIAL ---
   const [editingNotaId, setEditingNotaId] = useState(null);
@@ -290,7 +297,15 @@ const App = () => {
         console.error('Error fetching clientes:', clientesError);
         setClientes([]);
       } else {
-        setClientes(clientesData || []);
+        // Merge with locally stored NITs (localStorage) so user doesn't need to retype
+        let storedNitMap = {};
+        try {
+          storedNitMap = typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('clienteNitMap') || '{}') : {};
+        } catch (e) {
+          storedNitMap = {};
+        }
+        const merged = (clientesData || []).map(c => ({ ...c, nit: storedNitMap[c.id] || c.nit || '' }));
+        setClientes(merged);
       }
 
       // Fetch Transacciones con relaciones válidas
@@ -334,6 +349,19 @@ const App = () => {
   useEffect(() => {
     console.log('activeTab initial:', activeTab);
   }, []);
+
+  // Persist cliente NITs to localStorage whenever clientes change
+  useEffect(() => {
+    try {
+      const map = {};
+      (clientes || []).forEach(c => {
+        if (c && c.id && c.nit) map[c.id] = c.nit;
+      });
+      if (typeof localStorage !== 'undefined') localStorage.setItem('clienteNitMap', JSON.stringify(map));
+    } catch (e) {
+      // ignore
+    }
+  }, [clientes]);
 
   useEffect(() => {
     console.log('activeTab changed =>', activeTab);
@@ -762,6 +790,28 @@ const App = () => {
     return val;
   };
 
+  const convertirASecundaria = (cantidad, unidad, insumo) => {
+    if (!insumo) return '';
+    const val = parseFloat(cantidad) || 0;
+    const up = (insumo.unidadPrincipal || '').toString().toLowerCase();
+    const us = (insumo.unidadSecundaria || '').toString().toLowerCase();
+    if (!us) return '';
+    // asumimos que la cantidad almacenada está en la unidad principal
+    // si ya es secundaria, devolverla tal cual
+    if (unidad && unidad.toString().toLowerCase() === us) return val;
+    // si tenemos factor de conversión, convertir de principal a secundaria
+    if (insumo.factorConversion && (unidad === undefined || unidad.toString().toLowerCase() === up || unidad === '')) {
+      return val * (parseFloat(insumo.factorConversion) || 1);
+    }
+    // conversiones comunes entre m/cm y kg/g (opuestas a convertirAPrincipal)
+    const unit = (unidad || '').toString().toLowerCase();
+    if ((unit === 'cm' || unit === 'centimetros') && (us === 'm' || us === 'metros')) return val / 100;
+    if ((unit === 'm' || unit === 'metros') && (us === 'cm' || us === 'centimetros')) return val * 100;
+    if ((unit === 'g' || unit === 'gramos') && (us === 'kg' || us === 'kilogramos')) return val / 1000;
+    if ((unit === 'kg' || unit === 'kilogramos') && (us === 'g' || us === 'gramos')) return val * 1000;
+    return '';
+  };
+
   const getReferenceForSku = (sku) => {
     // Try local insumo first
     const local = insumos.find(i => i.sku === sku);
@@ -803,30 +853,42 @@ const App = () => {
   const exportHistoryCSV = () => {
     const rows = transacciones.flatMap(t => {
       const tercero = getTerceroName(t) || '-';
+      const terceroNit = t.clienteId ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nit || '') : '';
       if (t.items && t.items.length > 0) {
-        return t.items.map(it => ({
-          Fecha: formatFecha(t.fecha),
-          Tipo: t.tipo,
-          Codigo: it.sku,
-          Cantidad: formatNumber(it.cantidad),
-          Tercero: tercero,
-          Detalle: t.detalle || '',
-          Nota: t.notaSiigo || '',
-          Observaciones: t.observaciones || ''
-        }));
+        return t.items.map(it => {
+          const insumo = insumos.find(i => i.sku === it.sku);
+          const cantidad2 = insumo ? convertirASecundaria(it.cantidad, insumo.unidadPrincipal, insumo) : '';
+          const unidad2 = insumo ? (insumo.unidadSecundaria || '') : '';
+          return {
+            Fecha: formatFecha(t.fecha),
+            Tipo: t.tipo,
+            Codigo: it.sku,
+            Cantidad: formatNumber(it.cantidad),
+            "Cantidad 2ª": cantidad2 === '' ? '' : formatNumber(cantidad2),
+            "Unidad 2ª": unidad2,
+            Tercero: tercero,
+            NIT: terceroNit,
+            Detalle: t.detalle || '',
+            Nota: t.notaSiigo || '',
+            Observaciones: t.observaciones || ''
+          };
+        });
       }
       return [{
         Fecha: formatFecha(t.fecha),
         Tipo: t.tipo,
         Codigo: '-',
         Cantidad: '-',
+        "Cantidad 2ª": '-',
+        "Unidad 2ª": '-',
         Tercero: tercero,
+        NIT: terceroNit,
         Detalle: t.detalle || '',
         Nota: t.notaSiigo || '',
         Observaciones: t.observaciones || ''
       }];
     });
-    exportToCSV('historial.csv', rows, ['Fecha','Tipo','Codigo','Cantidad','Tercero','Detalle','Nota','Observaciones']);
+    exportToCSV('historial.csv', rows, ['Fecha','Tipo','Codigo','Cantidad','Cantidad 2ª','Unidad 2ª','Tercero','NIT','Detalle','Nota','Observaciones']);
   };
 
   const exportHistoryExcel = () => {
@@ -861,24 +923,36 @@ const App = () => {
     // Crear datos para Excel
     const rows = transaccionesFiltradas.flatMap(t => {
       const tercero = getTerceroName(t) || '-';
+      const terceroNit = t.clienteId ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nit || '') : '';
       if (t.items && t.items.length > 0) {
-        return t.items.map(it => ({
-          Fecha: formatearFecha(t.fecha),
-          Tipo: t.tipo,
-          SKU: it.sku,
-          Cantidad: formatNumber(it.cantidad),
-          Tercero: tercero,
-          Detalle: t.detalle || '',
-          Nota: t.notaSiigo || '',
-          Observaciones: t.observaciones || ''
-        }));
+        return t.items.map(it => {
+          const insumo = insumos.find(i => i.sku === it.sku);
+          const cantidad2 = insumo ? convertirASecundaria(it.cantidad, insumo.unidadPrincipal, insumo) : '';
+          const unidad2 = insumo ? (insumo.unidadSecundaria || '') : '';
+          return ({
+            Fecha: formatearFecha(t.fecha),
+            Tipo: t.tipo,
+            SKU: it.sku,
+            Cantidad: formatNumber(it.cantidad),
+            "Cantidad 2ª": cantidad2 === '' ? '' : formatNumber(cantidad2),
+            "Unidad 2ª": unidad2,
+            Tercero: tercero,
+            NIT: terceroNit,
+            Detalle: t.detalle || '',
+            Nota: t.notaSiigo || '',
+            Observaciones: t.observaciones || ''
+          });
+        });
       }
       return [{
         Fecha: formatearFecha(t.fecha),
         Tipo: t.tipo,
         SKU: '-',
         Cantidad: '-',
+        "Cantidad 2ª": '-',
+        "Unidad 2ª": '-',
         Tercero: tercero,
+        NIT: terceroNit,
         Detalle: t.detalle || '',
         Nota: t.notaSiigo || '',
         Observaciones: t.observaciones || ''
@@ -1147,7 +1221,7 @@ const App = () => {
                   <select 
                     className="w-full p-3 bg-slate-50 border rounded-lg"
                     value={formData.bodegaOrigen}
-                    onChange={e => setFormData({...formData, bodegaOrigen: e.target.value})}
+                    onChange={e => setFormData(f => ({...f, bodegaOrigen: e.target.value}))}
                   >
                     {BODEGAS.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
                   </select>
@@ -1158,7 +1232,7 @@ const App = () => {
                     <select 
                       className="w-full p-3 bg-slate-50 border rounded-lg"
                       value={formData.bodegaDestino}
-                      onChange={e => setFormData({...formData, bodegaDestino: e.target.value})}
+                      onChange={e => setFormData(f => ({...f, bodegaDestino: e.target.value}))}
                     >
                       {BODEGAS.map(b => <option key={b.id} value={b.id}>{b.nombre}</option>)}
                     </select>
@@ -1168,7 +1242,7 @@ const App = () => {
                         type="date"
                         className="w-full p-2 border rounded"
                         value={formData.fecha}
-                        onChange={e => setFormData({...formData, fecha: e.target.value})}
+                        onChange={e => setFormData(f => ({...f, fecha: e.target.value}))}
                         required
                       />
                     </div>
@@ -1179,13 +1253,18 @@ const App = () => {
                     <select 
                       className="w-full p-3 bg-slate-50 border rounded-lg border-rose-200 focus:border-rose-500"
                       value={formData.clienteDestino}
-                      onChange={e => setFormData({...formData, clienteDestino: e.target.value})}
+                      onChange={e => setFormData(f => ({...f, clienteDestino: e.target.value}))}
                     >
                       {clientes.map(c => <option key={c.id} value={c.id}>{c.nombre} ({c.id})</option>)}
                     </select>
                     <div className="mt-2">
                       <label className="block text-sm font-bold mb-1">Fecha</label>
-                      <input type="date" className="w-full p-2 border rounded" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} />
+                      <input
+                        type="date"
+                        className="w-full p-2 border rounded"
+                        value={formData.fecha}
+                        onChange={e => setFormData(f => ({...f, fecha: e.target.value}))}
+                      />
                     </div>
                   </div>
                 )}
@@ -1194,7 +1273,7 @@ const App = () => {
                 <div className="flex justify-between items-center">
                   <label className="block text-sm font-bold">Items a procesar</label>
                   <button 
-                    onClick={() => setFormData(f => ({...f, items: [...f.items, { sku: '', cantidad: '', unidad: '' }]}))}
+                    onClick={() => setFormData(f => ({...f, items: [...f.items, { _id: Date.now() + Math.random(), sku: '', cantidad: '', unidad: '' }]}))}
                     className="text-emerald-600 flex items-center gap-1 text-sm font-bold"
                   >
                     <Plus size={16} /> Añadir Item
@@ -1204,7 +1283,7 @@ const App = () => {
                   const insumoSel = insumos.find(i => i.sku === item.sku);
                   const saldoSede = (item.sku && stockPorBodega[item.sku]) ? (stockPorBodega[item.sku][formData.bodegaOrigen] || 0) : 0;
                   return (
-                    <div key={index} className="space-y-2 bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
+                    <div key={item._id} className="space-y-2 bg-slate-50 p-3 rounded-lg border border-dashed border-slate-300">
                       <div className="flex gap-2 items-end">
                         <div className="flex-1">
                           <label className="text-[10px] uppercase font-bold text-slate-400">Insumo (SKU)</label>
@@ -1212,11 +1291,14 @@ const App = () => {
                             className="w-full p-2 bg-white border rounded"
                             value={item.sku}
                             onChange={e => {
-                              const newItems = [...formData.items];
-                              newItems[index].sku = e.target.value;
-                              const sel = insumos.find(i => i.sku === e.target.value);
-                              newItems[index].unidad = sel ? sel.unidadPrincipal : '';
-                              setFormData(f => ({...f, items: newItems}));
+                              const val = e.target.value;
+                              setFormData(f => {
+                                const newItems = [...f.items];
+                                newItems[index] = { ...newItems[index], sku: val };
+                                const sel = insumos.find(i => i.sku === val);
+                                newItems[index].unidad = sel ? sel.unidadPrincipal : '';
+                                return { ...f, items: newItems };
+                              });
                             }}
                           >
                             <option value="">Seleccione...</option>
@@ -1241,9 +1323,11 @@ const App = () => {
                             inputMode="numeric"
                             className="w-full p-2 bg-white border rounded"
                             placeholder="0.00"
-                            defaultValue={item.cantidad == null ? '' : item.cantidad}
-                            onBlur={e => {
-                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                            value={item.cantidad == null ? '' : item.cantidad}
+                            onChange={e => {
+                              const raw = e.target.value;
+                              // allow digits and dot
+                              const val = raw.replace(/[^0-9.]/g, '');
                               setFormData(f => {
                                 const newItems = [...f.items];
                                 newItems[index] = { ...newItems[index], cantidad: val };
@@ -1255,9 +1339,12 @@ const App = () => {
                         <div className="w-36">
                           <label className="text-[10px] uppercase font-bold text-slate-400">Unidad</label>
                           <select className="w-full p-2 bg-white border rounded" value={item.unidad || ''} onChange={e => {
-                            const newItems = [...formData.items];
-                            newItems[index].unidad = e.target.value;
-                            setFormData(f => ({...f, items: newItems}));
+                            const val = e.target.value;
+                            setFormData(f => {
+                              const newItems = [...f.items];
+                              newItems[index] = { ...newItems[index], unidad: val };
+                              return { ...f, items: newItems };
+                            });
                           }}>
                             <option value="">Seleccione...</option>
                             {insumoSel && <option value={insumoSel.unidadPrincipal}>{insumoSel.unidadPrincipal}</option>}
@@ -1312,7 +1399,7 @@ const App = () => {
                   className="w-full p-3 bg-slate-50 border rounded-lg h-20"
                   placeholder="Detalles adicionales..."
                   value={formData.observaciones}
-                  onChange={e => setFormData({...formData, observaciones: e.target.value})}
+                  onChange={e => setFormData(f => ({...f, observaciones: e.target.value}))}
                 />
               </div>
               <button
@@ -1945,12 +2032,12 @@ const App = () => {
                   ))}
                 </div>
                 <div className="mt-4 flex gap-2">
-                  <input id="newProvId" placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
-                  <input id="newProvName" placeholder="Nombre Proveedor" className="flex-1 p-2 border rounded text-sm" />
+                  <input value={newProvIdState} onChange={e => setNewProvIdState(e.target.value)} placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
+                  <input value={newProvNameState} onChange={e => setNewProvNameState(e.target.value)} placeholder="Nombre Proveedor" className="flex-1 p-2 border rounded text-sm" />
                   <button 
                     onClick={async () => {
-                      const id = document.getElementById('newProvId').value;
-                      const name = document.getElementById('newProvName').value;
+                      const id = String(newProvIdState || '').trim();
+                      const name = String(newProvNameState || '').trim();
                       console.log('CREATE PROVEEDOR:', { id, name });
                       if (id.length === 3 && name) {
                         try {
@@ -1958,14 +2045,11 @@ const App = () => {
                           console.log('SUPABASE RESPONSE:', { data, error });
                           if (error) {
                             console.error('ERROR OBJECT:', error);
-                            console.error('ERROR STATUS:', error.status);
-                            console.error('ERROR MESSAGE:', error.message);
-                            console.error('ERROR CODE:', error.code);
                             showError(error, 'Error creando proveedor');
                           } else {
-                            setProveedores([...proveedores, ...data]);
-                            document.getElementById('newProvId').value = '';
-                            document.getElementById('newProvName').value = '';
+                            setProveedores(prev => [...prev, ...data]);
+                            setNewProvIdState('');
+                            setNewProvNameState('');
                             alert('Proveedor creado correctamente');
                           }
                         } catch (e) {
@@ -1987,47 +2071,23 @@ const App = () => {
                 <div className="space-y-2 max-h-[300px] overflow-y-auto pr-2">
                   {clientes.map(cli => (
                     <div key={cli.id} className="flex justify-between items-center bg-slate-50 p-2 rounded border">
-                      <span className="font-mono text-indigo-600 font-bold">{cli.id}</span>
-                      <span className="text-sm font-medium uppercase">{cli.nombre}</span>
+                      <div>
+                        <div className="font-mono text-indigo-600 font-bold">{cli.id}</div>
+                        <div className="text-sm font-medium uppercase">{cli.nombre}</div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                              <input
+                          className="w-40 p-2 border rounded text-sm"
+                          placeholder="NIT (9 díg)"
+                          maxLength={9}
+                          value={cli.nit || ''}
+                          onChange={e => setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: e.target.value } : c))}
+                        />
+                      </div>
                     </div>
                   ))}
                 </div>
-                <div className="mt-4 flex gap-2">
-                  <input id="newCliId" placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
-                  <input id="newCliName" placeholder="Nombre Cliente" className="flex-1 p-2 border rounded text-sm" />
-                  <button 
-                    onClick={async () => {
-                      const id = document.getElementById('newCliId').value;
-                      const name = document.getElementById('newCliName').value;
-                      console.log('CREATE CLIENTE:', { id, name });
-                      if(id.length === 3 && name) {
-                        try {
-                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase() }).select();
-                          console.log('SUPABASE RESPONSE:', { data, error });
-                          if(error) {
-                            console.error('ERROR OBJECT:', error);
-                            console.error('ERROR STATUS:', error.status);
-                            console.error('ERROR MESSAGE:', error.message);
-                            console.error('ERROR CODE:', error.code);
-                            showError(error, 'Error creando cliente');
-                          }
-                          else {
-                            setClientes([...clientes, ...data]);
-                            document.getElementById('newCliId').value = '';
-                            document.getElementById('newCliName').value = '';
-                            alert('Cliente creado correctamente');
-                          }
-                        } catch (e) {
-                          console.error('EXCEPTION:', e);
-                          showError(e, 'Excepción creando cliente');
-                        }
-                      } else {
-                        alert('ID debe tener 3 dígitos');
-                      }
-                    }}
-                    className="bg-indigo-600 text-white p-2 rounded px-4 text-sm font-bold"
-                  >Crear</button>
-                </div>
+                
               </div>
             </div>
           </div>
@@ -2099,51 +2159,61 @@ const App = () => {
                   onChange={e => setCurrentInsumo({...currentInsumo, nombre: e.target.value})}
                 />
               </div>
-              <div className="col-span-1">
-                <label className="block text-sm font-bold mb-1">Referencia (opcional)</label>
-                <input 
-                  type="text"
-                  className="w-full p-2 border rounded"
-                  placeholder="Ref interna / codigo proveedor"
-                  value={currentInsumo.referencia}
-                  onChange={e => setCurrentInsumo({...currentInsumo, referencia: e.target.value})}
-                />
-              </div>
-              <div className="col-span-1">
-                <label className="block text-sm font-bold mb-1">Fecha</label>
-                <input type="date" className="w-full p-2 border rounded" value={currentInsumo.fecha} onChange={e => setCurrentInsumo({...currentInsumo, fecha: e.target.value})} />
-              </div>
-              <div className="border-t border-slate-100 col-span-2 pt-4 flex gap-4">
-                <div className="flex-1">
-                  <label className="block text-sm font-bold mb-1">Medida 1 (Unidad)</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number" placeholder="1" className="w-16 p-2 border rounded" 
-                      value={currentInsumo.cantidadPrincipal}
-                      onChange={e => setCurrentInsumo({...currentInsumo, cantidadPrincipal: e.target.value})} 
-                    />
-                    <input 
-                      type="text" placeholder="Rollo" className="flex-1 p-2 border rounded" 
-                      value={currentInsumo.unidadPrincipal}
-                      onChange={e => setCurrentInsumo({...currentInsumo, unidadPrincipal: e.target.value})} 
-                    />
-                  </div>
+                <div className="mt-4 flex gap-2">
+                  <input value={newCliIdState} onChange={e => setNewCliIdState(e.target.value)} placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
+                  <input value={newCliNameState} onChange={e => setNewCliNameState(e.target.value)} placeholder="Nombre Cliente" className="flex-1 p-2 border rounded text-sm" />
+                  <input value={newCliNitState} onChange={e => setNewCliNitState(e.target.value)} placeholder="NIT (9 Díg)" className="w-40 p-2 border rounded text-sm" maxLength={9} />
+                  <button 
+                    onClick={async () => {
+                      const id = String(newCliIdState || '').trim();
+                      const name = String(newCliNameState || '').trim();
+                      const nit = String(newCliNitState || '').trim() || '';
+                      console.log('CREATE CLIENTE:', { id, name, nit });
+                      if(id.length === 3 && name) {
+                        if (nit && !/^\d{9}$/.test(nit)) { alert('NIT debe tener 9 dígitos'); return; }
+                        try {
+                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase() }).select();
+                          console.log('SUPABASE RESPONSE:', { data, error });
+                          if(error) {
+                            console.error('ERROR OBJECT:', error);
+                            showError(error, 'Error creando cliente');
+                          }
+                          else {
+                            const created = data.map(d => ({ ...d, nit }));
+                            setClientes(prev => [...prev, ...created]);
+                            setNewCliIdState('');
+                            setNewCliNameState('');
+                            setNewCliNitState('');
+                            alert('Cliente creado correctamente');
+                          }
+                        } catch (e) {
+                          console.error('EXCEPTION:', e);
+                          showError(e, 'Excepción creando cliente');
+                        }
+                      } else {
+                        alert('ID debe tener 3 dígitos');
+                      }
+                    }}
+                    className="bg-indigo-600 text-white p-2 rounded px-4 text-sm font-bold"
+                  >Crear</button>
                 </div>
-                <div className="flex items-end pb-2 text-slate-400 font-bold">=</div>
-                <div className="flex-1">
-                  <label className="block text-sm font-bold mb-1">Equivalencia / Factor</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="number" placeholder="100" className="w-20 p-2 border rounded" 
-                      value={currentInsumo.factorConversion}
-                      onChange={e => setCurrentInsumo({...currentInsumo, factorConversion: e.target.value})} 
-                    />
-                    <input 
-                      type="text" placeholder="Centímetros" className="flex-1 p-2 border rounded" 
-                      value={currentInsumo.unidadSecundaria}
-                      onChange={e => setCurrentInsumo({...currentInsumo, unidadSecundaria: e.target.value})} 
-                    />
-                  </div>
+              <div className="col-span-2">
+                <label className="block text-sm font-bold mb-1">Equivalencia / Factor</label>
+                <div className="flex gap-2">
+                  <input
+                    type="number"
+                    placeholder="100"
+                    className="w-20 p-2 border rounded"
+                    value={currentInsumo.factorConversion}
+                    onChange={e => setCurrentInsumo({...currentInsumo, factorConversion: e.target.value})}
+                  />
+                  <input
+                    type="text"
+                    placeholder="Centímetros"
+                    className="flex-1 p-2 border rounded"
+                    value={currentInsumo.unidadSecundaria}
+                    onChange={e => setCurrentInsumo({...currentInsumo, unidadSecundaria: e.target.value})}
+                  />
                 </div>
               </div>
               <div className="col-span-1">
