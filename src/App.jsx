@@ -297,14 +297,8 @@ const App = () => {
         console.error('Error fetching clientes:', clientesError);
         setClientes([]);
       } else {
-        // Merge with locally stored NITs (localStorage) so user doesn't need to retype
-        let storedNitMap = {};
-        try {
-          storedNitMap = typeof localStorage !== 'undefined' ? JSON.parse(localStorage.getItem('clienteNitMap') || '{}') : {};
-        } catch (e) {
-          storedNitMap = {};
-        }
-        const merged = (clientesData || []).map(c => ({ ...c, nit: storedNitMap[c.id] || c.nit || '' }));
+        // Clientes now include NIT from database directly
+        const merged = (clientesData || []).map(c => ({ ...c, nit: c.nit || '' }));
         setClientes(merged);
       }
 
@@ -349,19 +343,6 @@ const App = () => {
   useEffect(() => {
     console.log('activeTab initial:', activeTab);
   }, []);
-
-  // Persist cliente NITs to localStorage whenever clientes change
-  useEffect(() => {
-    try {
-      const map = {};
-      (clientes || []).forEach(c => {
-        if (c && c.id && c.nit) map[c.id] = c.nit;
-      });
-      if (typeof localStorage !== 'undefined') localStorage.setItem('clienteNitMap', JSON.stringify(map));
-    } catch (e) {
-      // ignore
-    }
-  }, [clientes]);
 
   useEffect(() => {
     console.log('activeTab changed =>', activeTab);
@@ -2087,7 +2068,32 @@ const App = () => {
                           placeholder="NIT (9 díg)"
                           maxLength={9}
                           value={cli.nit || ''}
-                          onChange={e => setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: e.target.value } : c))}
+                          onChange={e => {
+                            const newNit = e.target.value;
+                            // Validate: only numbers
+                            if (newNit && !/^\d*$/.test(newNit)) {
+                              alert('NIT solo puede contener dígitos');
+                              return;
+                            }
+                            // Update local state
+                            setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: newNit } : c));
+                            // Update in database - allow empty or exactly 9 digits
+                            if (newNit.length === 0 || newNit.length === 9) {
+                              supabase.from('clientes').update({ nit: newNit || null }).eq('id', cli.id)
+                                .then(({ data, error }) => {
+                                  if (error) {
+                                    console.error('Error updating NIT:', error);
+                                    showError(error, 'Error guardando NIT');
+                                  } else {
+                                    console.log('NIT guardado:', { cli: cli.id, nit: newNit });
+                                  }
+                                })
+                                .catch(err => {
+                                  console.error('Exception updating NIT:', err);
+                                  showError(err, 'Excepción guardando NIT');
+                                });
+                            }
+                          }}
                         />
                       </div>
                     </div>
@@ -2178,14 +2184,14 @@ const App = () => {
                       if(id.length === 3 && name) {
                         if (nit && !/^\d{9}$/.test(nit)) { alert('NIT debe tener 9 dígitos'); return; }
                         try {
-                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase() }).select();
+                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase(), nit: nit || null }).select();
                           console.log('SUPABASE RESPONSE:', { data, error });
                           if(error) {
                             console.error('ERROR OBJECT:', error);
                             showError(error, 'Error creando cliente');
                           }
                           else {
-                            const created = data.map(d => ({ ...d, nit }));
+                            const created = data.map(d => ({ ...d, nit: d.nit || '' }));
                             setClientes(prev => [...prev, ...created]);
                             setNewCliIdState('');
                             setNewCliNameState('');

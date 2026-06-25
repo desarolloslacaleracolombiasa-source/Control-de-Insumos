@@ -6,6 +6,13 @@
 - Opción B (subir): en SQL Editor usa **Upload** y sube `supabase/init.sql`.
 - Ejecuta (Run). Debe completar sin errores; verás "Done".
 
+**Aplicar Migraciones**
+
+Si ya tienes la BD creada y necesitas agregar nuevas columnas (como NIT en clientes):
+- Ve a **SQL Editor** → **New query**.
+- Copia y pega el contenido de `supabase/migrations/add_nit_to_clientes.sql`.
+- Ejecuta (Run).
+
 Si aparece error sobre políticas RLS/`WITH CHECK`, pega el mensaje aquí y lo ajusto.
 
 Después de ejecutar el SQL:

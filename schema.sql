@@ -19,6 +19,7 @@ CREATE TABLE categorias (
 CREATE TABLE clientes (
   id VARCHAR(3) PRIMARY KEY,
   nombre VARCHAR(255) NOT NULL,
+  nit VARCHAR(9),
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
