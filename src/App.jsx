@@ -62,6 +62,8 @@ const App = () => {
 
     // Referencia global a fetchData para uso en callbacks
     const fetchDataRef = React.useRef();
+    // Ref para proveedores (evitar closure staleness en fetchData)
+    const proveedoresRef = React.useRef([]);
   // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
   const [selectedBodega, setSelectedBodega] = useState(null);
   const [activeTab, setActiveTab] = useState('insumos');
@@ -181,6 +183,13 @@ const App = () => {
   const [newCliNameState, setNewCliNameState] = useState('');
   const [newCliNitState, setNewCliNitState] = useState('');
 
+  // --- ESTADO FECHA EN FORMULARIO TRASLADOS/CONSUMOS ---
+  const [fechaInput, setFechaInput] = useState(new Date().toISOString().slice(0,10));
+
+  // --- ESTADO EDICION NIT EN MAESTRO CLIENTES ---
+  const [editingNitId, setEditingNitId] = useState(null);
+  const [tempNitValue, setTempNitValue] = useState('');
+
   // --- ESTADO EDICION NOTA TRASLADO EN HISTORIAL ---
   const [editingNotaId, setEditingNotaId] = useState(null);
   const [tempNotaValue, setTempNotaValue] = useState('');
@@ -245,23 +254,50 @@ const App = () => {
     }
   }
 
+  // Helper: deep comparison of two values (arrays/objects/primitives)
+  const deepEqual = (a, b) => {
+    if (a === b) return true;
+    if (a == null || b == null) return false;
+    if (typeof a !== typeof b) return false;
+    if (Array.isArray(a) && Array.isArray(b)) {
+      if (a.length !== b.length) return false;
+      for (let i = 0; i < a.length; i++) {
+        if (!deepEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    if (typeof a === 'object') {
+      const keysA = Object.keys(a);
+      const keysB = Object.keys(b);
+      if (keysA.length !== keysB.length) return false;
+      for (const k of keysA) {
+        if (!deepEqual(a[k], b[k])) return false;
+      }
+      return true;
+    }
+    return false;
+  };
+
   useEffect(() => {
     const fetchData = async () => {
       // Fetch Insumos
       const { data: insumosData, error: insumosError } = await supabase.from('insumos').select('*');
       if (insumosError) console.error('Error fetching insumos:', insumosError);
-      else setInsumos((insumosData || []).map(i => ({
-        sku: i.sku,
-        proveedorId: i.proveedor_id,
-        categoriaId: i.categoria_id,
-        insumoId: i.insumo_id,
-        nombre: i.nombre,
-        unidadPrincipal: i.unidad_principal,
-        cantidadPrincipal: i.cantidad_principal,
-        unidadSecundaria: i.unidad_secundaria,
-        factorConversion: i.factor_conversion,
-        stockMinimo: i.stock_minimo,
-      })));
+      else {
+        const mapped = (insumosData || []).map(i => ({
+          sku: i.sku,
+          proveedorId: i.proveedor_id,
+          categoriaId: i.categoria_id,
+          insumoId: i.insumo_id,
+          nombre: i.nombre,
+          unidadPrincipal: i.unidad_principal,
+          cantidadPrincipal: i.cantidad_principal,
+          unidadSecundaria: i.unidad_secundaria,
+          factorConversion: i.factor_conversion,
+          stockMinimo: i.stock_minimo,
+        }));
+        setInsumos(prev => deepEqual(prev, mapped) ? prev : mapped);
+      }
 
       // Fetch Stock
       const { data: stockData, error: stockError } = await supabase.from('stock').select('*');
@@ -272,7 +308,7 @@ const App = () => {
           if (!stockMap[s.insumo_sku]) stockMap[s.insumo_sku] = {};
           stockMap[s.insumo_sku][s.bodega_id] = s.cantidad;
         });
-        setStockPorBodega(stockMap);
+        setStockPorBodega(prev => deepEqual(prev, stockMap) ? prev : stockMap);
       }
 
       // Fetch Categorias, Proveedores, Clientes (con fallback local si la tabla no existe)
@@ -281,7 +317,8 @@ const App = () => {
         console.error('Error fetching categorias:', categoriasError);
         setCategorias(DEFAULT_CATEGORIES);
       } else {
-        setCategorias((categoriasData && categoriasData.length > 0) ? categoriasData : DEFAULT_CATEGORIES);
+        const catData = (categoriasData && categoriasData.length > 0) ? categoriasData : DEFAULT_CATEGORIES;
+        setCategorias(prev => deepEqual(prev, catData) ? prev : catData);
       }
 
       const { data: proveedoresData, error: proveedoresError } = await supabase.from('proveedores').select('*');
@@ -289,7 +326,8 @@ const App = () => {
         console.error('Error fetching proveedores:', proveedoresError);
         setProveedores([]);
       } else {
-        setProveedores(proveedoresData || []);
+        const provData = proveedoresData || [];
+        setProveedores(prev => deepEqual(prev, provData) ? prev : provData);
       }
 
       const { data: clientesData, error: clientesError } = await supabase.from('clientes').select('*');
@@ -298,11 +336,12 @@ const App = () => {
         setClientes([]);
       } else {
         // Clientes now include NIT from database directly
-        const merged = (clientesData || []).map(c => ({ ...c, nit: c.nit || '' }));
-        setClientes(merged);
+        const cliData = (clientesData || []).map(c => ({ ...c, nit: c.nit || '' }));
+        setClientes(prev => deepEqual(prev, cliData) ? prev : cliData);
       }
 
       // Fetch Transacciones con relaciones válidas
+      // Capture current proveedores at call time for computing proveedorNombre
       const { data: transaccionesData, error: transaccionesError } = await supabase
         .from('transacciones')
         .select(`*, transaccion_items(*), bodega_origen:bodega_origen_id(nombre), bodega_destino:bodega_destino_id(nombre), cliente:cliente_id(nombre)`)
@@ -310,7 +349,9 @@ const App = () => {
 
       if (transaccionesError) console.error('Error fetching transactions:', transaccionesError);
       else {
-        setTransacciones((transaccionesData || []).map(t => {
+        // Use a ref-based snapshot of proveedores for the mapping
+        const provSnapshot = proveedoresRef.current || [];
+        const mappedTrans = (transaccionesData || []).map(t => {
           const items = (t.transaccion_items || []).map(ti => ({ sku: ti.insumo_sku, cantidad: ti.cantidad }));
           return {
             id: t.id,
@@ -328,9 +369,10 @@ const App = () => {
             clienteId: t.cliente_id,
             proveedorId: t.proveedor_id,
             clienteNombre: t.cliente?.nombre || '',
-            proveedorNombre: proveedores.find(p => String(p.id) === String(t.proveedor_id))?.nombre || ''
+            proveedorNombre: provSnapshot.find(p => String(p.id) === String(t.proveedor_id))?.nombre || ''
           };
-        }));
+        });
+        setTransacciones(prev => deepEqual(prev, mappedTrans) ? prev : mappedTrans);
       }
     };
     fetchDataRef.current = fetchData;
@@ -340,6 +382,18 @@ const App = () => {
     return () => clearInterval(interval);
   }, []);
 
+  // Mantener proveedoresRef sincronizado con el estado de proveedores
+  useEffect(() => {
+    proveedoresRef.current = proveedores;
+  }, [proveedores]);
+
+  // Mantener fechaInput sincronizado cuando formData.fecha cambia externamente
+  useEffect(() => {
+    if (formData.fecha && formData.fecha !== fechaInput) {
+      setFechaInput(formData.fecha);
+    }
+  }, [formData.fecha]);
+
   useEffect(() => {
     console.log('activeTab initial:', activeTab);
   }, []);
@@ -348,16 +402,6 @@ const App = () => {
     console.log('activeTab changed =>', activeTab);
   }, [activeTab]);
 
-  useEffect(() => {
-    const clickLogger = (e) => {
-      // log a short summary to avoid huge output
-      const tag = e.target && e.target.tagName ? e.target.tagName : String(e.target);
-      const cls = e.target && e.target.className ? (typeof e.target.className === 'string' ? e.target.className.split(' ').slice(0,3).join(' ') : '') : '';
-      console.log('DOM click on:', tag, cls);
-    };
-    window.addEventListener('click', clickLogger);
-    return () => window.removeEventListener('click', clickLogger);
-  }, []);
 
   const agregarTransaccion = async (tipo, data) => {
       // DEBUG: Mostrar datos que se van a insertar
@@ -1222,8 +1266,9 @@ const App = () => {
                       <input
                         type="date"
                         className="w-full p-2 border rounded"
-                        value={formData.fecha}
-                        onChange={e => setFormData(f => ({...f, fecha: e.target.value}))}
+                        value={fechaInput}
+                        onChange={e => setFechaInput(e.target.value)}
+                        onBlur={() => setFormData(f => ({...f, fecha: fechaInput}))}
                         required
                       />
                     </div>
@@ -1243,8 +1288,9 @@ const App = () => {
                       <input
                         type="date"
                         className="w-full p-2 border rounded"
-                        value={formData.fecha}
-                        onChange={e => setFormData(f => ({...f, fecha: e.target.value}))}
+                        value={fechaInput}
+                        onChange={e => setFechaInput(e.target.value)}
+                        onBlur={() => setFormData(f => ({...f, fecha: fechaInput}))}
                       />
                     </div>
                   </div>
@@ -2067,17 +2113,15 @@ const App = () => {
                           className="w-40 p-2 border rounded text-sm"
                           placeholder="NIT (9 díg)"
                           maxLength={9}
-                          value={cli.nit || ''}
+                          value={editingNitId === cli.id ? tempNitValue : (cli.nit || '')}
+                          onFocus={() => { setEditingNitId(cli.id); setTempNitValue(cli.nit || ''); }}
                           onChange={e => {
                             const newNit = e.target.value;
-                            // Validate: only numbers
                             if (newNit && !/^\d*$/.test(newNit)) {
                               alert('NIT solo puede contener dígitos');
                               return;
                             }
-                            // Update local state
-                            setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: newNit } : c));
-                            // Update in database - allow empty or exactly 9 digits
+                            setTempNitValue(newNit);
                             if (newNit.length === 0 || newNit.length === 9) {
                               supabase.from('clientes').update({ nit: newNit || null }).eq('id', cli.id)
                                 .then(({ data, error }) => {
@@ -2086,6 +2130,7 @@ const App = () => {
                                     showError(error, 'Error guardando NIT');
                                   } else {
                                     console.log('NIT guardado:', { cli: cli.id, nit: newNit });
+                                    setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: newNit } : c));
                                   }
                                 })
                                 .catch(err => {
@@ -2094,12 +2139,49 @@ const App = () => {
                                 });
                             }
                           }}
+                          onBlur={() => {
+                            setClientes(prev => prev.map(c => c.id === cli.id ? { ...c, nit: tempNitValue } : c));
+                            setEditingNitId(null);
+                          }}
                         />
                       </div>
                     </div>
                   ))}
                 </div>
-                
+                <div className="mt-4 flex gap-2">
+                  <input value={newCliIdState} onChange={e => setNewCliIdState(e.target.value)} placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
+                  <input value={newCliNameState} onChange={e => setNewCliNameState(e.target.value)} placeholder="Nombre Cliente" className="flex-1 p-2 border rounded text-sm" />
+                  <input value={newCliNitState} onChange={e => setNewCliNitState(e.target.value)} placeholder="NIT (9 Díg)" className="w-40 p-2 border rounded text-sm" maxLength={9} />
+                  <button 
+                    onClick={async () => {
+                      const id = String(newCliIdState || '').trim();
+                      const name = String(newCliNameState || '').trim();
+                      const nit = String(newCliNitState || '').trim() || '';
+                      if(id.length === 3 && name) {
+                        if (nit && !/^\d{9}$/.test(nit)) { alert('NIT debe tener 9 dígitos'); return; }
+                        try {
+                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase(), nit: nit || null }).select();
+                          if(error) {
+                            showError(error, 'Error creando cliente');
+                          }
+                          else {
+                            const created = data.map(d => ({ ...d, nit: d.nit || '' }));
+                            setClientes(prev => [...prev, ...created]);
+                            setNewCliIdState('');
+                            setNewCliNameState('');
+                            setNewCliNitState('');
+                            alert('Cliente creado correctamente');
+                          }
+                        } catch (e) {
+                          showError(e, 'Excepción creando cliente');
+                        }
+                      } else {
+                        alert('ID debe tener 3 dígitos y nombre es obligatorio');
+                      }
+                    }}
+                    className="bg-indigo-600 text-white p-2 rounded px-4 text-sm font-bold"
+                  >Crear</button>
+                </div>
               </div>
             </div>
           </div>
@@ -2171,44 +2253,26 @@ const App = () => {
                   onChange={e => setCurrentInsumo({...currentInsumo, nombre: e.target.value})}
                 />
               </div>
-                <div className="mt-4 flex gap-2">
-                  <input value={newCliIdState} onChange={e => setNewCliIdState(e.target.value)} placeholder="ID (3 Díg)" className="w-24 p-2 border rounded text-sm" maxLength={3} />
-                  <input value={newCliNameState} onChange={e => setNewCliNameState(e.target.value)} placeholder="Nombre Cliente" className="flex-1 p-2 border rounded text-sm" />
-                  <input value={newCliNitState} onChange={e => setNewCliNitState(e.target.value)} placeholder="NIT (9 Díg)" className="w-40 p-2 border rounded text-sm" maxLength={9} />
-                  <button 
-                    onClick={async () => {
-                      const id = String(newCliIdState || '').trim();
-                      const name = String(newCliNameState || '').trim();
-                      const nit = String(newCliNitState || '').trim() || '';
-                      console.log('CREATE CLIENTE:', { id, name, nit });
-                      if(id.length === 3 && name) {
-                        if (nit && !/^\d{9}$/.test(nit)) { alert('NIT debe tener 9 dígitos'); return; }
-                        try {
-                          const { data, error } = await supabase.from('clientes').insert({ id, nombre: name.toUpperCase(), nit: nit || null }).select();
-                          console.log('SUPABASE RESPONSE:', { data, error });
-                          if(error) {
-                            console.error('ERROR OBJECT:', error);
-                            showError(error, 'Error creando cliente');
-                          }
-                          else {
-                            const created = data.map(d => ({ ...d, nit: d.nit || '' }));
-                            setClientes(prev => [...prev, ...created]);
-                            setNewCliIdState('');
-                            setNewCliNameState('');
-                            setNewCliNitState('');
-                            alert('Cliente creado correctamente');
-                          }
-                        } catch (e) {
-                          console.error('EXCEPTION:', e);
-                          showError(e, 'Excepción creando cliente');
-                        }
-                      } else {
-                        alert('ID debe tener 3 dígitos');
-                      }
-                    }}
-                    className="bg-indigo-600 text-white p-2 rounded px-4 text-sm font-bold"
-                  >Crear</button>
-                </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1">Unidad Principal</label>
+                <input
+                  type="text"
+                  className="w-full p-2 border rounded"
+                  placeholder="Ej: rollo, unidad, kg..."
+                  value={currentInsumo.unidadPrincipal}
+                  onChange={e => setCurrentInsumo({...currentInsumo, unidadPrincipal: e.target.value})}
+                />
+              </div>
+              <div className="col-span-1">
+                <label className="block text-sm font-bold mb-1">Cant. por Unidad Principal</label>
+                <input
+                  type="number"
+                  className="w-full p-2 border rounded"
+                  placeholder="Ej: 1"
+                  value={currentInsumo.cantidadPrincipal}
+                  onChange={e => setCurrentInsumo({...currentInsumo, cantidadPrincipal: e.target.value})}
+                />
+              </div>
               <div className="col-span-2">
                 <label className="block text-sm font-bold mb-1">Equivalencia / Factor</label>
                 <div className="flex gap-2">
