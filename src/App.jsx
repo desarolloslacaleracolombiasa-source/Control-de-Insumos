@@ -527,11 +527,14 @@ const App = () => {
     const bId = currentInsumo.bodegaInicial;
 
     if (isEditing) {
+      const nombreEditado = (currentInsumo.nombre || '').trim();
+      const fechaEdicion = currentInsumo.fecha ? currentInsumo.fecha.slice(0, 10) : new Date().toISOString().slice(0, 10);
+
       // Update insumo master data
       const { error } = await supabase
         .from('insumos')
         .update({
-          nombre: currentInsumo.nombre,
+          nombre: nombreEditado,
           unidad_principal: currentInsumo.unidadPrincipal,
           cantidad_principal: currentInsumo.cantidadPrincipal,
           unidad_secundaria: currentInsumo.unidadSecundaria,
@@ -544,8 +547,29 @@ const App = () => {
         showError(error, 'Error actualizando el insumo');
         return;
       }
-      setInsumos(prev => prev.map(ins => ins.sku === currentInsumo.sku ? { ...currentInsumo, sku } : ins));
-      await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: currentInsumo.fecha.slice(0,10) });
+
+      setInsumos(prev => prev.map(ins =>
+        ins.sku === currentInsumo.sku
+          ? {
+              ...ins,
+              ...currentInsumo,
+              sku: currentInsumo.sku,
+              nombre: nombreEditado,
+              unidadPrincipal: currentInsumo.unidadPrincipal,
+              cantidadPrincipal: currentInsumo.cantidadPrincipal,
+              unidadSecundaria: currentInsumo.unidadSecundaria,
+              factorConversion: currentInsumo.factorConversion,
+              stockMinimo: currentInsumo.stockMinimo,
+            }
+          : ins
+      ));
+
+      try {
+        await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: fechaEdicion });
+      } catch (transaccionError) {
+        console.error('No se pudo registrar la transacción de edición:', transaccionError);
+      }
+
       alert("Insumo actualizado correctamente");
 
     } else { // Creating new or adding stock
@@ -658,7 +682,10 @@ const App = () => {
   };
 
   const openEditModal = (insumo) => {
-    setCurrentInsumo(insumo);
+    setCurrentInsumo({
+      ...insumo,
+      fecha: insumo.fecha || new Date().toISOString().slice(0, 10),
+    });
     setIsEditing(true);
     setShowModal(true);
   };
