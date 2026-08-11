@@ -67,6 +67,7 @@ const App = () => {
   // --- ESTADOS DE NAVEGACIÓN DE SEDES ---
   const [selectedBodega, setSelectedBodega] = useState(null);
   const [activeTab, setActiveTab] = useState('insumos');
+  const errorBoundaryRef = React.useRef(null);
 
   // --- ESTADOS PRINCIPALES ---
   const [insumos, setInsumos] = useState([]);
@@ -83,6 +84,8 @@ const App = () => {
   // --- MODALES Y FORMULARIOS ---
   const [showModal, setShowModal] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
+  const [isProcessingConsumo, setIsProcessingConsumo] = useState(false);
+  const procesandoConsumoRef = React.useRef(false);
   const [currentInsumo, setCurrentInsumo] = useState({
     proveedorId: '001', 
     categoriaId: '0001',
@@ -208,6 +211,23 @@ const App = () => {
     return parts.join('.');
   };
 
+  const getDetalleDisplay = (t) => {
+    const items = t?.items || [];
+    if (items.length > 0) {
+      return items.map(it => {
+        const insumo = insumos.find(i => String(i.sku) === String(it.sku));
+        const nombre = insumo?.nombre ? ` - ${insumo.nombre}` : '';
+        return `${formatNumber(it.cantidad)} x ${it.sku}${nombre}`;
+      }).join(' | ');
+    }
+    if (t?.sku) {
+      const insumo = insumos.find(i => String(i.sku) === String(t.sku));
+      const nombre = insumo?.nombre ? ` - ${insumo.nombre}` : '';
+      return `${formatNumber(t.cantidad)} x ${t.sku}${nombre}`;
+    }
+    return t?.detalle || '';
+  };
+
   const formatFecha = (fecha) => {
     if (!fecha) return '';
     const raw = typeof fecha === 'string' ? fecha.slice(0, 10) : '';
@@ -218,9 +238,25 @@ const App = () => {
     return String(fecha);
   };
 
+  const getProveedorNameForTransaction = (t) => {
+    if (!t) return '';
+    if (t.proveedorNombre) return t.proveedorNombre;
+
+    const proveedorIds = t.proveedorId
+      ? [t.proveedorId]
+      : [...new Set((t.items || [])
+          .map(item => insumos.find(insumo => String(insumo.sku) === String(item.sku))?.proveedorId || String(item.sku || '').split('-')[0])
+          .filter(Boolean))];
+
+    return proveedorIds.map(id => {
+      const proveedor = proveedores.find(p => String(p.id) === String(id));
+      return proveedor ? proveedor.nombre : `ID: ${id}`;
+    }).join(' | ');
+  };
+
   const getTerceroName = (t) => {
     if (!t) return '';
-    return t.clienteNombre || (t.cliente && t.cliente.nombre) || t.proveedorNombre || (t.proveedor && t.proveedor.nombre) || '';
+    return t.clienteNombre || (t.cliente && t.cliente.nombre) || getProveedorNameForTransaction(t) || (t.proveedor && t.proveedor.nombre) || '';
   };
 
   const showError = (err, prefix = 'Error') => {
@@ -406,6 +442,9 @@ const App = () => {
   const agregarTransaccion = async (tipo, data) => {
       // DEBUG: Mostrar datos que se van a insertar
       console.log('Intentando guardar transacción:', { tipo, data });
+    const itemsParaTransaccion = Array.isArray(data?.items) && data.items.length > 0
+      ? data.items
+      : (data?.sku ? [{ sku: data.sku, cantidad: data.cantidad }] : []);
     // Validación y armado de datos para cada tipo
     let clienteId = null;
     if (tipo === 'CONSUMO') {
@@ -480,12 +519,12 @@ const App = () => {
       return false;
     }
 
-    if(data.items && data.items.length > 0) {
+    if(itemsParaTransaccion.length > 0) {
       if (!transaccion || !transaccion.id) {
         alert('No se pudo crear la transacción en la base de datos. Revisa la consola para más detalles.');
         return false;
       }
-      const itemsToInsert = data.items.map(item => ({
+      const itemsToInsert = itemsParaTransaccion.map(item => ({
         transaccion_id: transaccion.id,
         insumo_sku: item.sku,
         cantidad: item.cantidad
@@ -603,7 +642,7 @@ const App = () => {
             ...prev,
             [sku]: { ...(prev[sku] || {}), [bId]: nuevaCantidad }
         }));
-        await agregarTransaccion('INGRESO', { sku, detalle: `Ingreso de stock en ${BODEGAS.find(b => b.id == bId).nombre}`, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
+        await agregarTransaccion('INGRESO', { items: [{ sku, cantidad: qtyIngreso }], detalle: `Ingreso de stock en ${BODEGAS.find(b => b.id == bId).nombre}`, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
         alert("Stock incrementado correctamente para el código existente.");
 
       } else { // New insumo, create it and add initial stock
@@ -667,7 +706,7 @@ const App = () => {
           [sku]: { ...(prev[sku] || {}), [bId]: qtyIngreso }
         }));
         const detalleCreacion = `Creación inicial en ${BODEGAS.find(b => b.id == bId).nombre}${currentInsumo.referencia ? ' | Ref: '+currentInsumo.referencia : ''}`;
-        await agregarTransaccion('CREACIÓN', { sku, detalle: detalleCreacion, cantidad: qtyIngreso, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
+        await agregarTransaccion('CREACIÓN', { items: [{ sku, cantidad: qtyIngreso }], detalle: detalleCreacion, bodegaDestinoId: bId, fecha: currentInsumo.fecha.slice(0,10) });
         alert("Nuevo insumo registrado con éxito.");
       }
     }
@@ -737,6 +776,12 @@ const App = () => {
     }
 
     // Solo descontar stock si la transacción fue exitosa
+    if (tipo === 'CONSUMO') {
+      if (procesandoConsumoRef.current) return;
+      procesandoConsumoRef.current = true;
+      setIsProcessingConsumo(true);
+    }
+
     agregarTransaccion(tipo, { 
       detalle: detalleHistorial,
       items: itemsAProcesar,
@@ -810,6 +855,13 @@ const App = () => {
           observaciones: '',
         });
         alert("Movimiento procesado correctamente.");
+      }
+    }).catch(error => {
+      if (tipo === 'CONSUMO') showError(error, 'Error procesando consumo');
+    }).finally(() => {
+      if (tipo === 'CONSUMO') {
+        procesandoConsumoRef.current = false;
+        setIsProcessingConsumo(false);
       }
     });
   };
@@ -1026,17 +1078,14 @@ const App = () => {
 
   const exportKardexCSV = () => {
     if (showGeneralKardex) {
-      const rows = transacciones.flatMap(t => (t.items || []).map(it => ({
-        Fecha: formatFecha(t.fecha),
-        SKU: it.sku,
-        Nombre: (insumos.find(i => i.sku === it.sku)?.nombre) || '',
-        Tipo: t.tipo,
-        Origen: BODEGAS.find(b => b.id == t.bodegaOrigenId)?.nombre || '',
-        Destino: BODEGAS.find(b => b.id == t.bodegaDestinoId)?.nombre || '',
-        Tercero: getTerceroName(t) || '',
-        Cantidad: formatNumber(it.cantidad)
+      const rows = insumos.flatMap(insumo => BODEGAS.map(bodega => ({
+        SKU: insumo.sku,
+        Insumo: insumo.nombre || '',
+        Sede: bodega.nombre,
+        'Stock real': formatNumber(stockPorBodega[insumo.sku]?.[bodega.id] || 0),
+        Unidad: insumo.unidadPrincipal || ''
       })));
-      exportToCSV('kardex_general.csv', rows, ['Fecha','SKU','Nombre','Tipo','Origen','Destino','Tercero','Cantidad']);
+      exportToCSV('stock_real_por_insumo_y_sede.csv', rows, ['SKU','Insumo','Sede','Stock real','Unidad']);
     } else if (kardexSku) {
       const rows = transacciones.filter(t => t.sku === kardexSku || (t.items && t.items.some(it => it.sku === kardexSku))).map(t => {
         const it = (t.items || []).find(i => i.sku === kardexSku);
@@ -1176,10 +1225,14 @@ const App = () => {
     }
   }
 
+  // Mantiene estable la identidad del contenedor para evitar que los campos
+  // de los formularios se desmonten y pierdan el foco en cada pulsacion.
+  const ErrorBoundaryComponent = errorBoundaryRef.current || (errorBoundaryRef.current = ErrorBoundary);
+
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
       <Navbar />
-      <ErrorBoundary>
+      <ErrorBoundaryComponent>
       <main className="p-6 max-w-7xl mx-auto">
         <div className="mb-4 p-3 rounded-lg bg-slate-100 border text-sm text-slate-700">
           <strong className="font-bold">DEBUG:</strong> activeTab = {activeTab} —
@@ -1458,9 +1511,10 @@ const App = () => {
               </div>
               <button
                 onClick={() => procesarMovimiento(activeTab === 'traslados' ? 'TRASLADO' : 'CONSUMO')}
-                className={`w-full mt-6 font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2 text-white ${activeTab === 'traslados' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+                disabled={activeTab === 'consumos' && isProcessingConsumo}
+                className={`w-full mt-6 font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2 text-white disabled:cursor-not-allowed disabled:opacity-60 ${activeTab === 'traslados' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-rose-600 hover:bg-rose-700'}`}
               >
-                <Check size={20} /> Procesar {activeTab.slice(0, -1).toUpperCase()}
+                <Check size={20} /> {activeTab === 'consumos' && isProcessingConsumo ? 'Procesando consumo...' : `Procesar ${activeTab.slice(0, -1).toUpperCase()}`}
               </button>
             </div>
           </div>
@@ -1738,7 +1792,7 @@ const App = () => {
                     <th className="p-4 text-sm font-bold">Fecha</th>
                     <th className="p-4 text-sm font-bold">Tipo</th>
                     <th className="p-4 text-sm font-bold">Detalle</th>
-                    <th className="p-4 text-sm font-bold">Cliente</th>
+                    <th className="p-4 text-sm font-bold">Tercero</th>
                     <th className="p-4 text-sm font-bold">Unidades</th>
                     <th className="p-4 text-sm font-bold">Referencia / SKU</th>
                     <th className="p-4 text-sm font-bold">Nota de Traslado o Consumo Siigo</th>
@@ -1831,7 +1885,7 @@ const App = () => {
                         </td>
                         {/* Detalle */}
                         <td className="p-4">
-                          <div className="font-medium">{(t.items && t.items.length) ? t.items.map(it => `${formatNumber(it.cantidad)} x ${it.sku}${insumos.find(i => i.sku === it.sku) ? ' - '+insumos.find(i => i.sku === it.sku).nombre : ''}`).join(' | ') : (t.detalle || '')}</div>
+                          <div className="font-medium">{getDetalleDisplay(t)}</div>
                         </td>
                         {/* Cliente o Proveedor */}
                         <td className="p-4 text-sm font-bold text-indigo-700">
@@ -1839,19 +1893,10 @@ const App = () => {
                             ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-')
                             : (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN')
                               ? (
-                                  proveedores.find(p => String(p.id) === String(t.proveedorId))?.nombre
-                                  || (t.proveedorId ? `ID: ${t.proveedorId}` : '-')
+                                  getProveedorNameForTransaction(t) || '-'
                                 )
                               : '-'}
                         </td>
-                        {/* SKU (solo para INGRESO/CREACIÓN) */}
-                        {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && (
-                          <td className="p-4 text-center font-mono">{(t.items && t.items.length > 0) ? t.items[0].sku : '-'}</td>
-                        )}
-                        {/* Cliente (solo para INGRESO/CREACIÓN) */}
-                        {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && (
-                          <td className="p-4 text-sm font-bold text-indigo-700">{(t.clienteId && clientes.find(c => String(c.id) === String(t.clienteId))?.nombre) || '-'}</td>
-                        )}
                         {/* Unidades */}
                         <td className="p-4 text-center font-black">{unidades || '-'}</td>
                         {/* Referencia / SKU */}
@@ -1978,11 +2023,12 @@ const App = () => {
                     if (t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') {
                       contraparte = clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-';
                     } else if (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') {
-                      contraparte = proveedores.find(p => String(p.id) === String(t.proveedorId))?.nombre
-                        || (t.proveedorId ? `ID: ${t.proveedorId}` : '-');
+                      contraparte = getProveedorNameForTransaction(t) || '-';
                     }
                     // Cantidad para INGRESO/CREACIÓN
-                    const cantidad = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') ? (t.cantidad || '-') : undefined;
+                    const cantidad = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN')
+                      ? ((t.items || []).reduce((total, item) => total + (parseFloat(item.cantidad) || 0), 0) || '-')
+                      : undefined;
                     return (
                       <div className="fixed inset-0 bg-black/30 flex items-center justify-center z-50">
                         <div className="bg-white p-6 rounded shadow-xl w-full max-w-md">
@@ -1997,7 +2043,7 @@ const App = () => {
                             <div><b>Unidades:</b> {unidades || '-'}</div>
                             <div><b>Referencia/SKU:</b> {referencia || '-'}</div>
                             <div><b>Observaciones:</b> {t.observaciones || '-'}</div>
-                            {(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') && (t.items && t.items.length > 0) && (
+                            {(t.items && t.items.length > 0) && (
                               <div>
                                 <b>Productos:</b>
                                 <table className="w-full text-xs mt-1 border">
@@ -2025,11 +2071,8 @@ const App = () => {
                                 </table>
                               </div>
                             )}
-                            {/* Para otros tipos, mostrar lista simple como antes */}
-                            {!(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') && (
-                              <div><b>Items:</b> {(t.items || []).map(it => (
-                                <div key={it.sku} className="pl-2 text-xs">{it.sku} - {formatNumber(it.cantidad)} {insumos.find(i => i.sku === it.sku)?.nombre || ''}</div>
-                              ))}</div>
+                            {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && !(t.items && t.items.length > 0) && (
+                              <div className="text-xs text-slate-500">No hay items guardados para este movimiento histórico.</div>
                             )}
                           </div>
                           <button onClick={() => setDetalleTransId(null)} className="mt-4 bg-emerald-600 text-white px-4 py-2 rounded">Cerrar</button>
@@ -2214,7 +2257,7 @@ const App = () => {
           </div>
         )}
       </main>
-      </ErrorBoundary>
+      </ErrorBoundaryComponent>
 
       {showModal && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4">
