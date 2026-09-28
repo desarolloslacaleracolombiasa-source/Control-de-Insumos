@@ -86,6 +86,8 @@ const App = () => {
   const [isEditing, setIsEditing] = useState(false);
   const [isProcessingConsumo, setIsProcessingConsumo] = useState(false);
   const procesandoConsumoRef = React.useRef(false);
+  const [isProcessingDevolucion, setIsProcessingDevolucion] = useState(false);
+  const procesandoDevolucionRef = React.useRef(false);
   const [currentInsumo, setCurrentInsumo] = useState({
     proveedorId: '001', 
     categoriaId: '0001',
@@ -173,6 +175,7 @@ const App = () => {
     bodegaOrigen: 1,
     bodegaDestino: 2,
     clienteDestino: '001', 
+    proveedorDestino: '',
     fecha: new Date().toISOString().slice(0,10),
     items: [{ _id: Date.now(), sku: '', cantidad: '', unidad: '' }],
     observaciones: '',
@@ -447,6 +450,7 @@ const App = () => {
       : (data?.sku ? [{ sku: data.sku, cantidad: data.cantidad }] : []);
     // Validación y armado de datos para cada tipo
     let clienteId = null;
+    let proveedorId = null;
     if (tipo === 'CONSUMO') {
       if (data.clienteDestino && String(data.clienteDestino).trim() !== '') {
         clienteId = String(data.clienteDestino).trim();
@@ -468,6 +472,14 @@ const App = () => {
       }
     }
     if (clienteId === '') clienteId = null;
+
+    if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
+      proveedorId = String(data.proveedorId || '').trim();
+      if (!proveedorId || !proveedores.some(p => String(p.id) === proveedorId)) {
+        showError('Seleccione un proveedor válido para la devolución.', 'Proveedor no válido');
+        return false;
+      }
+    }
 
     // Validación especial para TRASLADO
     if (tipo === 'TRASLADO') {
@@ -494,6 +506,9 @@ const App = () => {
     if (tipo === 'CONSUMO') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
       if (clienteId) insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
+    } else if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
+      insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
+      insertObj.proveedor_id = isNaN(proveedorId) ? proveedorId : Number(proveedorId);
     } else if (tipo === 'TRASLADO') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
       insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
@@ -738,6 +753,11 @@ const App = () => {
       return;
     }
 
+    if (tipo === 'DEVOLUCIÓN A PROVEEDOR' && !proveedores.some(p => String(p.id) === String(formData.proveedorDestino))) {
+      alert('Seleccione un proveedor válido para la devolución.');
+      return;
+    }
+
     let itemsAProcesar = [];
 
     for (const item of formData.items) {
@@ -750,12 +770,17 @@ const App = () => {
       const stockActual = stockPorBodega[sku]?.[bOriId] || 0;
       const stockMinimo = parseFloat(insumoData?.stockMinimo || 0);
 
+      if (tipo === 'DEVOLUCIÓN A PROVEEDOR' && String(insumoData?.proveedorId) !== String(formData.proveedorDestino)) {
+        alert(`El insumo ${sku} no corresponde al proveedor seleccionado.`);
+        return;
+      }
+
       if (stockActual < qty) {
         alert(`Stock insuficiente para ${sku} en la bodega seleccionada (Disponible: ${stockActual})`);
         return;
       }
 
-      if (tipo === 'CONSUMO' && (stockActual - qty) < stockMinimo) {
+      if ((tipo === 'CONSUMO' || tipo === 'DEVOLUCIÓN A PROVEEDOR') && (stockActual - qty) < stockMinimo) {
         const confirmacion = window.confirm(`ALERTA: El stock resultante (${stockActual - qty}) para ${sku} quedará por debajo del mínimo (${stockMinimo}). ¿Desea continuar?`);
         if (!confirmacion) return;
       }
@@ -765,12 +790,15 @@ const App = () => {
 
     // Calcular detalleHistorial antes de usarlo
     const clienteNombre = clientes.find(c => c.id === formData.clienteDestino)?.nombre || 'Desconocido';
+    const proveedorNombre = proveedores.find(p => String(p.id) === String(formData.proveedorDestino))?.nombre || 'Desconocido';
     const bodegaOrigenNombre = BODEGAS.find(b => b.id == formData.bodegaOrigen)?.nombre || 'Desconocida';
     const bodegaDestinoNombre = BODEGAS.find(b => b.id == formData.bodegaDestino)?.nombre || 'Desconocida';
 
     let detalleHistorial = "";
     if (tipo === 'CONSUMO') {
       detalleHistorial = `CONSUMO: ${clienteNombre} (Sede: ${bodegaOrigenNombre})`;
+    } else if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
+      detalleHistorial = `DEVOLUCIÓN A PROVEEDOR: ${proveedorNombre} (Sede: ${bodegaOrigenNombre})`;
     } else if (tipo === 'TRASLADO') {
       detalleHistorial = `TRASLADO: ${bodegaOrigenNombre} -> ${bodegaDestinoNombre}`;
     }
@@ -780,6 +808,10 @@ const App = () => {
       if (procesandoConsumoRef.current) return;
       procesandoConsumoRef.current = true;
       setIsProcessingConsumo(true);
+    } else if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
+      if (procesandoDevolucionRef.current) return;
+      procesandoDevolucionRef.current = true;
+      setIsProcessingDevolucion(true);
     }
 
     agregarTransaccion(tipo, { 
@@ -790,10 +822,11 @@ const App = () => {
       bodegaOrigenId: formData.bodegaOrigen,
       bodegaDestinoId: tipo === 'TRASLADO' ? formData.bodegaDestino : null,
       fecha: formData.fecha.slice(0,10),
-      clienteDestino: formData.clienteDestino
+      clienteDestino: formData.clienteDestino,
+      proveedorId: formData.proveedorDestino
     }).then(async success => {
       if (success) {
-        if (tipo === 'TRASLADO' || tipo === 'CONSUMO') {
+        if (tipo === 'TRASLADO' || tipo === 'CONSUMO' || tipo === 'DEVOLUCIÓN A PROVEEDOR') {
           // Actualizar stock local y en Supabase
           let nuevoStock = { ...stockPorBodega };
           for (const item of itemsAProcesar) {
@@ -821,7 +854,7 @@ const App = () => {
                 bodega_id: bDestId,
                 cantidad: stockDestino + cantidadMovimiento
               }, { onConflict: 'insumo_sku,bodega_id' });
-            } else if (tipo === 'CONSUMO') {
+            } else if (tipo === 'CONSUMO' || tipo === 'DEVOLUCIÓN A PROVEEDOR') {
               // Solo descuenta en la bodega origen
               nuevoStock[sku] = {
                 ...(nuevoStock[sku] || {}),
@@ -850,18 +883,23 @@ const App = () => {
           bodegaOrigen: selectedBodega.id, 
           bodegaDestino: BODEGAS.find(b => b.id != selectedBodega.id)?.id || 2, 
           clienteDestino: '001',
+          proveedorDestino: '',
           fecha: new Date().toISOString().slice(0,10),
           items: [{ sku: '', cantidad: 0, unidad: '' }], 
           observaciones: '',
         });
-        alert("Movimiento procesado correctamente.");
+        alert('Movimiento procesado correctamente.');
       }
     }).catch(error => {
       if (tipo === 'CONSUMO') showError(error, 'Error procesando consumo');
+      if (tipo === 'DEVOLUCIÓN A PROVEEDOR') showError(error, 'Error procesando devolución a proveedor');
     }).finally(() => {
       if (tipo === 'CONSUMO') {
         procesandoConsumoRef.current = false;
         setIsProcessingConsumo(false);
+      } else if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
+        procesandoDevolucionRef.current = false;
+        setIsProcessingDevolucion(false);
       }
     });
   };
@@ -939,7 +977,7 @@ const App = () => {
     const items = t.items || [];
     for (const it of items) {
       const qty = parseFloat(it.cantidad) || 0;
-      if (t.tipo === 'CONSUMO') {
+      if (t.tipo === 'CONSUMO' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') {
         if (origenId === actualSede) salida += qty;
       } else if (t.tipo === 'TRASLADO') {
         if (origenId === actualSede) salida += qty;
@@ -1178,6 +1216,7 @@ const App = () => {
           { id: 'insumos', icon: Box, label: 'Insumos' },
           { id: 'traslados', icon: ArrowRightLeft, label: 'Traslados' },
           { id: 'consumos', icon: LogOut, label: 'Consumos' },
+          { id: 'devoluciones', icon: Truck, label: 'Devolución proveedor' },
           { id: 'kardex', icon: FileText, label: 'Kardex' },
           { id: 'historial', icon: History, label: 'Historial' },
           { id: 'maestro', icon: Settings, label: 'Maestro' },
@@ -1236,7 +1275,7 @@ const App = () => {
       <main className="p-6 max-w-7xl mx-auto">
         <div className="mb-4 p-3 rounded-lg bg-slate-100 border text-sm text-slate-700">
           <strong className="font-bold">DEBUG:</strong> activeTab = {activeTab} —
-          {` insumos:${String(activeTab==='insumos')} traslados:${String(activeTab==='traslados')} consumos:${String(activeTab==='consumos')} kardex:${String(activeTab==='kardex')} historial:${String(activeTab==='historial')} maestro:${String(activeTab==='maestro')}`}
+          {` insumos:${String(activeTab==='insumos')} traslados:${String(activeTab==='traslados')} consumos:${String(activeTab==='consumos')} devoluciones:${String(activeTab==='devoluciones')} kardex:${String(activeTab==='kardex')} historial:${String(activeTab==='historial')} maestro:${String(activeTab==='maestro')}`}
         </div>
         {activeTab === 'insumos' && (
           <div className="space-y-6">
@@ -1311,12 +1350,12 @@ const App = () => {
           </div>
         )}
 
-        {(activeTab === 'traslados' || activeTab === 'consumos') && (
+        {(activeTab === 'traslados' || activeTab === 'consumos' || activeTab === 'devoluciones') && (
           <div className="max-w-4xl mx-auto bg-white rounded-2xl shadow-lg border border-slate-200 overflow-hidden">
-            <div className={`p-6 text-white ${activeTab === 'traslados' ? 'bg-blue-600' : 'bg-rose-600'}`}>
+            <div className={`p-6 text-white ${activeTab === 'traslados' ? 'bg-blue-600' : activeTab === 'devoluciones' ? 'bg-amber-600' : 'bg-rose-600'}`}>
               <h2 className="text-2xl font-bold flex items-center gap-2">
-                {activeTab === 'traslados' ? <ArrowRightLeft /> : <LogOut />}
-                Nueva Orden de {activeTab.toUpperCase()}
+                {activeTab === 'traslados' ? <ArrowRightLeft /> : activeTab === 'devoluciones' ? <Truck /> : <LogOut />}
+                {activeTab === 'devoluciones' ? 'Devolución a proveedor' : `Nueva Orden de ${activeTab.toUpperCase()}`}
               </h2>
             </div>
             <div className="p-8 space-y-6">
@@ -1349,6 +1388,29 @@ const App = () => {
                         value={fechaInput}
                         onChange={e => setFechaInput(e.target.value)}
                         onBlur={() => setFormData(f => ({...f, fecha: fechaInput}))}
+                        required
+                      />
+                    </div>
+                  </div>
+                ) : activeTab === 'devoluciones' ? (
+                  <div>
+                    <label className="block text-sm font-bold mb-2">Proveedor destinatario</label>
+                    <select
+                      className="w-full p-3 bg-slate-50 border rounded-lg border-amber-200 focus:border-amber-500"
+                      value={formData.proveedorDestino}
+                      onChange={e => setFormData(f => ({ ...f, proveedorDestino: e.target.value, items: [{ _id: Date.now(), sku: '', cantidad: '', unidad: '' }] }))}
+                    >
+                      <option value="">Seleccione un proveedor...</option>
+                      {proveedores.map(p => <option key={p.id} value={p.id}>{p.nombre} ({p.id})</option>)}
+                    </select>
+                    <div className="mt-2">
+                      <label className="block text-sm font-bold mb-1">Fecha</label>
+                      <input
+                        type="date"
+                        className="w-full p-2 border rounded"
+                        value={fechaInput}
+                        onChange={e => setFechaInput(e.target.value)}
+                        onBlur={() => setFormData(f => ({ ...f, fecha: fechaInput }))}
                         required
                       />
                     </div>
@@ -1409,7 +1471,10 @@ const App = () => {
                             }}
                           >
                             <option value="">Seleccione...</option>
-                            {insumos.map(i => (
+                            {(activeTab === 'devoluciones'
+                              ? insumos.filter(i => String(i.proveedorId) === String(formData.proveedorDestino))
+                              : insumos
+                            ).map(i => (
                               <option key={i.sku} value={i.sku}>{i.sku} - {i.nombre}</option>
                             ))}
                           </select>
@@ -1510,11 +1575,11 @@ const App = () => {
                 />
               </div>
               <button
-                onClick={() => procesarMovimiento(activeTab === 'traslados' ? 'TRASLADO' : 'CONSUMO')}
-                disabled={activeTab === 'consumos' && isProcessingConsumo}
-                className={`w-full mt-6 font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2 text-white disabled:cursor-not-allowed disabled:opacity-60 ${activeTab === 'traslados' ? 'bg-blue-600 hover:bg-blue-700' : 'bg-rose-600 hover:bg-rose-700'}`}
+                onClick={() => procesarMovimiento(activeTab === 'traslados' ? 'TRASLADO' : activeTab === 'devoluciones' ? 'DEVOLUCIÓN A PROVEEDOR' : 'CONSUMO')}
+                disabled={(activeTab === 'consumos' && isProcessingConsumo) || (activeTab === 'devoluciones' && isProcessingDevolucion)}
+                className={`w-full mt-6 font-bold py-3 rounded-xl shadow-lg transition-colors flex justify-center items-center gap-2 text-white disabled:cursor-not-allowed disabled:opacity-60 ${activeTab === 'traslados' ? 'bg-blue-600 hover:bg-blue-700' : activeTab === 'devoluciones' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-rose-600 hover:bg-rose-700'}`}
               >
-                <Check size={20} /> {activeTab === 'consumos' && isProcessingConsumo ? 'Procesando consumo...' : `Procesar ${activeTab.slice(0, -1).toUpperCase()}`}
+                <Check size={20} /> {activeTab === 'consumos' && isProcessingConsumo ? 'Procesando consumo...' : activeTab === 'devoluciones' && isProcessingDevolucion ? 'Procesando devolución...' : activeTab === 'devoluciones' ? 'Procesar devolución' : `Procesar ${activeTab.slice(0, -1).toUpperCase()}`}
               </button>
             </div>
           </div>
@@ -1635,7 +1700,7 @@ const App = () => {
                           const destinoId = t.bodegaDestinoId ? String(t.bodegaDestinoId) : null;
 
                           // CONSUMO: salida de la sede actual
-                          if (t.tipo === 'CONSUMO' && origenId === actualSedeId) {
+                          if ((t.tipo === 'CONSUMO' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') && origenId === actualSedeId) {
                             esSalida = true;
                           } 
                           // TRASLADO: salida de origen o entrada en destino
@@ -1672,7 +1737,8 @@ const App = () => {
                                 <span className={`px-2 py-1 rounded text-[10px] font-black ${
                                   t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-emerald-100 text-emerald-700' : 
                                   t.tipo === 'EDICIÓN' ? 'bg-indigo-100 text-indigo-700' :
-                                  t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                                  t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' :
+                                  t.tipo === 'DEVOLUCIÓN A PROVEEDOR' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                                 }`}>
                                   {t.tipo}
                                 </span>
@@ -1682,14 +1748,14 @@ const App = () => {
                                         {t.tipo}
                                       </div>
                                       <div className="text-[11px] text-slate-500 mt-0.5">{(() => {
-                                        if ((t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && t.items && t.items.length) {
+                                        if ((t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') && t.items && t.items.length) {
                                           return `${t.detalle || ''} — ${t.items.map(it => `${formatNumber(it.cantidad)} x ${insumos.find(i => i.sku === it.sku)?.nombre || it.sku}`).join(' | ')}`;
                                         }
                                         return t.detalle;
                                       })()}</div>
                                 {t.observaciones && <div className="text-[10px] text-slate-400 italic mt-1">Obs: {t.observaciones}</div>}
                               </td>
-                              <td className="p-4 text-sm font-bold text-indigo-700">{t.clienteNombre || '-'}</td>
+                              <td className="p-4 text-sm font-bold text-indigo-700">{t.tipo === 'DEVOLUCIÓN A PROVEEDOR' ? (getProveedorNameForTransaction(t) || '-') : (t.clienteNombre || '-')}</td>
                               <td className="p-4 text-center font-black">
                                 {esSalida && (
                                   <span className="text-rose-600">-{formatNumber(cantidad)}</span>
@@ -1764,6 +1830,7 @@ const App = () => {
                   <option value="CONSUMO">Consumo</option>
                   <option value="INGRESO">Ingreso</option>
                   <option value="TRASLADO">Traslado</option>
+                  <option value="DEVOLUCIÓN A PROVEEDOR">Devolución a proveedor</option>
                 </select>
               </div>
               <div className="flex items-center gap-2">
@@ -1878,7 +1945,8 @@ const App = () => {
                           <span className={`px-2 py-1 rounded text-[10px] font-black ${
                             t.tipo === 'CREACIÓN' || t.tipo === 'INGRESO' ? 'bg-green-100 text-green-700' : 
                             t.tipo === 'EDICIÓN' ? 'bg-indigo-100 text-indigo-700' :
-                            t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' : 'bg-blue-100 text-blue-700'
+                            t.tipo === 'CONSUMO' ? 'bg-rose-100 text-rose-700' :
+                            t.tipo === 'DEVOLUCIÓN A PROVEEDOR' ? 'bg-amber-100 text-amber-700' : 'bg-blue-100 text-blue-700'
                           }`}>
                             {t.tipo === 'CREACIÓN' ? 'INGRESO' : t.tipo}
                           </span>
@@ -1891,7 +1959,7 @@ const App = () => {
                         <td className="p-4 text-sm font-bold text-indigo-700">
                           {(t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO')
                             ? (clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-')
-                            : (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN')
+                            : (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR')
                               ? (
                                   getProveedorNameForTransaction(t) || '-'
                                 )
@@ -1955,7 +2023,7 @@ const App = () => {
                                   let bodegaId = null;
                                   let cantidad = parseFloat(item.cantidad) || 0;
                                   // CREACIÓN/INGRESO suman en destino, CONSUMO suma en origen, TRASLADO depende
-                                  if (t.tipo === 'CONSUMO') {
+                                  if (t.tipo === 'CONSUMO' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') {
                                     bodegaId = t.bodegaOrigenId;
                                   } else if (t.tipo === 'TRASLADO') {
                                     // Si fue salida de origen, devolver a origen; si fue entrada en destino, restar de destino
@@ -2022,11 +2090,11 @@ const App = () => {
                     let contraparte = '-';
                     if (t.tipo === 'CONSUMO' || t.tipo === 'TRASLADO') {
                       contraparte = clientes.find(c => String(c.id) === String(t.clienteId))?.nombre || '-';
-                    } else if (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') {
+                    } else if (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') {
                       contraparte = getProveedorNameForTransaction(t) || '-';
                     }
                     // Cantidad para INGRESO/CREACIÓN
-                    const cantidad = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN')
+                    const cantidad = (t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR')
                       ? ((t.items || []).reduce((total, item) => total + (parseFloat(item.cantidad) || 0), 0) || '-')
                       : undefined;
                     return (
@@ -2071,7 +2139,7 @@ const App = () => {
                                 </table>
                               </div>
                             )}
-                            {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN') && !(t.items && t.items.length > 0) && (
+                            {(t.tipo === 'INGRESO' || t.tipo === 'CREACIÓN' || t.tipo === 'DEVOLUCIÓN A PROVEEDOR') && !(t.items && t.items.length > 0) && (
                               <div className="text-xs text-slate-500">No hay items guardados para este movimiento histórico.</div>
                             )}
                           </div>
