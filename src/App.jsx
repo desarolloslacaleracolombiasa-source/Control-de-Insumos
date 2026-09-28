@@ -2460,6 +2460,18 @@ const App = () => {
                   </select>
                 </div>
               </div>
+              {!isEditing && (
+                <div className="col-span-2">
+                  <label className="block text-sm font-bold mb-1">Fecha del ingreso</label>
+                  <input
+                    type="date"
+                    required
+                    className="w-full p-2 border rounded border-emerald-300 focus:border-emerald-500"
+                    value={currentInsumo.fecha || ''}
+                    onChange={e => setCurrentInsumo({ ...currentInsumo, fecha: e.target.value })}
+                  />
+                </div>
+              )}
               <div className="col-span-2 pt-4">
                 <button 
                   type="submit"
