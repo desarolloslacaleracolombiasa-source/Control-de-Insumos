@@ -508,7 +508,6 @@ const App = () => {
       if (clienteId) insertObj.cliente_id = isNaN(clienteId) ? clienteId : Number(clienteId);
     } else if (tipo === 'DEVOLUCIÓN A PROVEEDOR') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
-      insertObj.proveedor_id = isNaN(proveedorId) ? proveedorId : Number(proveedorId);
     } else if (tipo === 'TRASLADO') {
       insertObj.bodega_origen_id = Number(data.bodegaOrigenId);
       insertObj.bodega_destino_id = Number(data.bodegaDestinoId);
