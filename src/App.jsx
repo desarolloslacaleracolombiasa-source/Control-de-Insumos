@@ -448,7 +448,9 @@ const App = () => {
       console.log('Intentando guardar transacción:', { tipo, data });
     const itemsParaTransaccion = Array.isArray(data?.items) && data.items.length > 0
       ? data.items
-      : (data?.sku ? [{ sku: data.sku, cantidad: data.cantidad }] : []);
+      : (data?.sku && data?.cantidad !== undefined && data?.cantidad !== null
+          ? [{ sku: data.sku, cantidad: data.cantidad }]
+          : []);
     // Validación y armado de datos para cada tipo
     let clienteId = null;
     let proveedorId = null;
