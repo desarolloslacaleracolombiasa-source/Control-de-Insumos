@@ -72,6 +72,7 @@ const App = () => {
   // --- ESTADOS PRINCIPALES ---
   const [insumos, setInsumos] = useState([]);
   const [categorias, setCategorias] = useState([]);
+  const [categoriasExpandidas, setCategoriasExpandidas] = useState({});
   const [clientes, setClientes] = useState([]);
   const [proveedores, setProveedores] = useState([]);
   const [transacciones, setTransacciones] = useState([]);
@@ -583,8 +584,13 @@ const App = () => {
       const nombreEditado = (currentInsumo.nombre || '').trim();
       const fechaEdicion = currentInsumo.fecha ? currentInsumo.fecha.slice(0, 10) : new Date().toISOString().slice(0, 10);
 
-      // Update insumo master data
-      const { error } = await supabase
+      if (!nombreEditado) {
+        alert('El nombre del insumo es obligatorio.');
+        return;
+      }
+
+      // Actualiza y recupera el registro para confirmar que el cambio quedó guardado.
+      const { data: insumoActualizado, error } = await supabase
         .from('insumos')
         .update({
           nombre: nombreEditado,
@@ -594,25 +600,30 @@ const App = () => {
           factor_conversion: currentInsumo.factorConversion,
           stock_minimo: currentInsumo.stockMinimo,
         })
-        .eq('sku', currentInsumo.sku);
+        .eq('sku', sku)
+        .select()
+        .maybeSingle();
 
       if (error) {
         showError(error, 'Error actualizando el insumo');
         return;
       }
 
+      if (!insumoActualizado) {
+        showError('No se encontró el insumo para guardar los cambios.', 'Actualización no realizada');
+        return;
+      }
+
       setInsumos(prev => prev.map(ins =>
-        ins.sku === currentInsumo.sku
+        ins.sku === sku
           ? {
               ...ins,
-              ...currentInsumo,
-              sku: currentInsumo.sku,
-              nombre: nombreEditado,
-              unidadPrincipal: currentInsumo.unidadPrincipal,
-              cantidadPrincipal: currentInsumo.cantidadPrincipal,
-              unidadSecundaria: currentInsumo.unidadSecundaria,
-              factorConversion: currentInsumo.factorConversion,
-              stockMinimo: currentInsumo.stockMinimo,
+              nombre: insumoActualizado.nombre,
+              unidadPrincipal: insumoActualizado.unidad_principal,
+              cantidadPrincipal: insumoActualizado.cantidad_principal,
+              unidadSecundaria: insumoActualizado.unidad_secundaria,
+              factorConversion: insumoActualizado.factor_conversion,
+              stockMinimo: insumoActualizado.stock_minimo,
             }
           : ins
       ));
@@ -1142,6 +1153,42 @@ const App = () => {
     }
   };
 
+  const exportKardexGeneralExcel = () => {
+    if (!showGeneralKardex) {
+      alert('Active Kardex General para exportar el inventario total en Excel.');
+      return;
+    }
+
+    const rows = insumos.flatMap(insumo => {
+      const rowsPorSede = BODEGAS.map(bodega => ({
+        SKU: insumo.sku,
+        Insumo: insumo.nombre || '',
+        Sede: bodega.nombre,
+        'Stock real': Number(stockPorBodega[insumo.sku]?.[bodega.id] || 0),
+        Unidad: insumo.unidadPrincipal || ''
+      }));
+      const totalTodasLasSedes = rowsPorSede.reduce((total, row) => total + row['Stock real'], 0);
+
+      return [
+        ...rowsPorSede,
+        {
+          SKU: insumo.sku,
+          Insumo: insumo.nombre || '',
+          Sede: 'TOTAL TODAS LAS SEDES',
+          'Stock real': totalTodasLasSedes,
+          Unidad: insumo.unidadPrincipal || ''
+        }
+      ];
+    });
+    const worksheet = XLSX.utils.json_to_sheet(rows, {
+      header: ['SKU', 'Insumo', 'Sede', 'Stock real', 'Unidad']
+    });
+    worksheet['!cols'] = [{ wch: 18 }, { wch: 36 }, { wch: 22 }, { wch: 14 }, { wch: 14 }];
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Inventario General');
+    XLSX.writeFile(workbook, `inventario_general_${new Date().toISOString().slice(0, 10)}.xlsx`);
+  };
+
   const handleUpdateNotaSiigo = async (id) => {
     // Actualiza en Supabase y luego en el estado local
     const { error } = await supabase.from('transacciones').update({ nota_siigo: tempNotaValue }).eq('id', id);
@@ -1152,6 +1199,15 @@ const App = () => {
     setTransacciones(prev => prev.map(t => t.id === id ? { ...t, notaSiigo: tempNotaValue } : t));
     setEditingNotaId(null);
   };
+
+  const categoriasParaVista = useMemo(() => {
+    const categoriasConocidas = new Set(categorias.map(categoria => String(categoria.id)));
+    const categoriasFaltantes = [...new Set(insumos.map(insumo => insumo.categoriaId).filter(Boolean))]
+      .filter(categoriaId => !categoriasConocidas.has(String(categoriaId)))
+      .map(categoriaId => ({ id: categoriaId, nombre: `Categoría ${categoriaId}` }));
+
+    return [...categorias, ...categoriasFaltantes];
+  }, [categorias, insumos]);
 
   if (!selectedBodega) {
     return (
@@ -1295,56 +1351,93 @@ const App = () => {
                 <Plus size={20} /> Nuevo Insumo / Ingreso
               </button>
             </div>
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-              <table className="w-full text-left">
-                <thead className="bg-slate-100 border-b border-slate-200">
-                  <tr>
-                    <th className="p-4 font-semibold text-sm">Código (SKU)</th>
-                    <th className="p-4 font-semibold text-sm">Nombre Insumo</th>
-                    <th className="p-4 font-semibold text-sm">Stock Mínimo</th>
-                    <th className="p-4 font-semibold text-sm">Equivalencia</th>
-                    <th className="p-4 font-semibold text-sm text-center">Stock Real (Sede)</th>
-                    <th className="p-4 font-semibold text-sm">Acciones</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {insumos.length === 0 ? (
-                    <tr><td colSpan="6" className="p-8 text-center text-slate-400 italic">No hay insumos registrados.</td></tr>
-                  ) : insumos.map(insumo => {
-                    const stockEnSede = stockPorBodega[insumo.sku]?.[selectedBodega.id] || 0;
-                    const esCritico = stockEnSede <= parseFloat(insumo.stockMinimo);
-                    return (
-                      <tr key={insumo.sku} className={`hover:bg-slate-50 transition-colors ${esCritico ? 'bg-rose-50/50' : ''}`}>
-                        <td className="p-4 font-mono text-xs font-bold text-emerald-700">
-                          <div className="flex items-center gap-2">
-                            {insumo.sku}
-                            {esCritico && <AlertTriangle size={14} className="text-rose-500" title="Bajo Stock Mínimo" />}
-                          </div>
-                        </td>
-                        <td className="p-4 text-sm font-medium">{insumo.nombre}</td>
-                        <td className="p-4 text-sm font-bold text-slate-600">{formatNumber(insumo.stockMinimo)}</td>
-                        <td className="p-4 text-sm text-slate-500">
-                          {insumo.factorConversion} {insumo.unidadSecundaria}
-                        </td>
-                        <td className="p-4 text-center">
-                          <span className={`px-3 py-1 rounded-full text-xs font-black ${esCritico ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
-                            {formatNumber(stockEnSede)}
-                          </span>
-                        </td>
-                        <td className="p-4">
-                          <button 
-                            onClick={() => openEditModal(insumo)}
-                            className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
-                            title="Editar Insumo"
-                          >
-                            <Edit2 size={18} />
-                          </button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+            <div className="space-y-3">
+              {categoriasParaVista.length === 0 ? (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8 text-center text-slate-400 italic">
+                  No hay categorías ni insumos registrados.
+                </div>
+              ) : categoriasParaVista.map(categoria => {
+                const insumosDeCategoria = insumos.filter(insumo => String(insumo.categoriaId) === String(categoria.id));
+                const categoriaExpandida = Boolean(categoriasExpandidas[categoria.id]);
+
+                return (
+                  <section key={categoria.id} className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                    <button
+                      type="button"
+                      onClick={() => setCategoriasExpandidas(prev => ({ ...prev, [categoria.id]: !prev[categoria.id] }))}
+                      className="w-full p-4 flex items-center justify-between text-left hover:bg-slate-50 transition-colors"
+                      aria-expanded={categoriaExpandida}
+                    >
+                      <div className="flex items-center gap-3">
+                        {categoriaExpandida ? <ChevronDown size={20} className="text-emerald-600" /> : <ChevronRight size={20} className="text-slate-500" />}
+                        <div>
+                          <h3 className="font-bold text-slate-800">{categoria.nombre}</h3>
+                          <p className="text-xs text-slate-500">Tipo de insumo: {categoria.id}</p>
+                        </div>
+                      </div>
+                      <span className="px-3 py-1 rounded-full bg-slate-100 text-slate-600 text-xs font-bold">
+                        {insumosDeCategoria.length} {insumosDeCategoria.length === 1 ? 'insumo' : 'insumos'}
+                      </span>
+                    </button>
+
+                    {categoriaExpandida && (
+                      <div className="border-t border-slate-200 overflow-x-auto">
+                        <table className="w-full text-left">
+                          <thead className="bg-slate-100 border-b border-slate-200">
+                            <tr>
+                              <th className="p-4 font-semibold text-sm">Código (SKU)</th>
+                              <th className="p-4 font-semibold text-sm">Proveedor</th>
+                              <th className="p-4 font-semibold text-sm">Nombre Insumo</th>
+                              <th className="p-4 font-semibold text-sm">Stock Mínimo</th>
+                              <th className="p-4 font-semibold text-sm">Equivalencia</th>
+                              <th className="p-4 font-semibold text-sm text-center">Stock Real (Sede)</th>
+                              <th className="p-4 font-semibold text-sm">Acciones</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-slate-100">
+                            {insumosDeCategoria.length === 0 ? (
+                              <tr><td colSpan="7" className="p-6 text-center text-slate-400 italic">No hay insumos registrados en esta categoría.</td></tr>
+                            ) : insumosDeCategoria.map(insumo => {
+                              const stockEnSede = stockPorBodega[insumo.sku]?.[selectedBodega.id] || 0;
+                              const esCritico = stockEnSede <= parseFloat(insumo.stockMinimo);
+                              return (
+                                <tr key={insumo.sku} className={`hover:bg-slate-50 transition-colors ${esCritico ? 'bg-rose-50/50' : ''}`}>
+                                  <td className="p-4 font-mono text-xs font-bold text-emerald-700">
+                                    <div className="flex items-center gap-2">
+                                      {insumo.sku}
+                                      {esCritico && <AlertTriangle size={14} className="text-rose-500" title="Bajo Stock Mínimo" />}
+                                    </div>
+                                  </td>
+                                  <td className="p-4 text-sm text-slate-600">
+                                    {proveedores.find(proveedor => String(proveedor.id) === String(insumo.proveedorId))?.nombre || '-'}
+                                  </td>
+                                  <td className="p-4 text-sm font-medium">{insumo.nombre}</td>
+                                  <td className="p-4 text-sm font-bold text-slate-600">{formatNumber(insumo.stockMinimo)}</td>
+                                  <td className="p-4 text-sm text-slate-500">{insumo.factorConversion} {insumo.unidadSecundaria}</td>
+                                  <td className="p-4 text-center">
+                                    <span className={`px-3 py-1 rounded-full text-xs font-black ${esCritico ? 'bg-rose-100 text-rose-800 border border-rose-200' : 'bg-emerald-100 text-emerald-800 border border-emerald-200'}`}>
+                                      {formatNumber(stockEnSede)}
+                                    </span>
+                                  </td>
+                                  <td className="p-4">
+                                    <button
+                                      onClick={() => openEditModal(insumo)}
+                                      className="p-2 text-slate-400 hover:text-emerald-600 transition-colors"
+                                      title="Editar Insumo"
+                                    >
+                                      <Edit2 size={18} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </section>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1603,6 +1696,11 @@ const App = () => {
                   className="ml-2 px-3 py-2 bg-slate-100 border rounded text-sm font-bold hover:bg-slate-200"
                 >{showGeneralKardex ? 'Ver por Producto' : 'Ver Kardex General'}</button>
                 <button onClick={exportKardexCSV} className="ml-2 px-3 py-2 bg-emerald-600 text-white rounded text-sm font-bold hover:bg-emerald-700">Exportar CSV</button>
+                {showGeneralKardex && (
+                  <button onClick={exportKardexGeneralExcel} className="ml-2 px-3 py-2 bg-blue-600 text-white rounded text-sm font-bold hover:bg-blue-700">
+                    Exportar Inventario Excel
+                  </button>
+                )}
               </div>
             </div>
 
