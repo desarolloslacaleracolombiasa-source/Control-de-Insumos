@@ -581,6 +581,7 @@ const App = () => {
     const bId = currentInsumo.bodegaInicial;
 
     if (isEditing) {
+      const skuExistente = currentInsumo.sku || sku;
       const nombreEditado = (currentInsumo.nombre || '').trim();
       const fechaEdicion = currentInsumo.fecha ? currentInsumo.fecha.slice(0, 10) : new Date().toISOString().slice(0, 10);
 
@@ -600,7 +601,7 @@ const App = () => {
           factor_conversion: currentInsumo.factorConversion,
           stock_minimo: currentInsumo.stockMinimo,
         })
-        .eq('sku', sku)
+        .eq('sku', skuExistente)
         .select()
         .maybeSingle();
 
@@ -615,7 +616,7 @@ const App = () => {
       }
 
       setInsumos(prev => prev.map(ins =>
-        ins.sku === sku
+        ins.sku === skuExistente
           ? {
               ...ins,
               nombre: insumoActualizado.nombre,
@@ -629,7 +630,7 @@ const App = () => {
       ));
 
       try {
-        await agregarTransaccion('EDICIÓN', { sku, detalle: `Modificación de datos maestros del insumo`, fecha: fechaEdicion });
+        await agregarTransaccion('EDICIÓN', { sku: skuExistente, detalle: `Modificación de datos maestros del insumo`, fecha: fechaEdicion });
       } catch (transaccionError) {
         console.error('No se pudo registrar la transacción de edición:', transaccionError);
       }
